@@ -8,5 +8,21 @@ services:
       - nats-data:/data
     restart: unless-stopped
 
+  clickhouse:
+    image: clickhouse/clickhouse-server:26.8
+    ports:
+      - "127.0.0.1:8123:8123"
+    environment:
+      CLICKHOUSE_DB: sentinelforge
+    volumes:
+      - clickhouse-data:/var/lib/clickhouse
+    healthcheck:
+      test: ["CMD", "clickhouse-client", "--query", "SELECT 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+
 volumes:
   nats-data:
+  clickhouse-data:

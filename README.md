@@ -18,7 +18,7 @@
 
 ---
 
-> 🚧 **Project status: early development.** SentinelForge is in its design and architecture stage. This document describes the target design and roadmap. Sections marked *(planned)* are not implemented yet. Nothing here should be read as shipped functionality.
+> 🚧 **Project status: early development.** The first implementation slices are in place: the Protobuf event contract, Go ingestion gateway, NATS JetStream bus, ClickHouse event store, Linux eBPF process/file/network sensors, and a standalone Rust Sigma evaluator. The evaluator and event store are not yet connected into a complete alerting pipeline. Windows support, the dashboard, and the remaining platform services are still planned.
 
 > ⚠️ **Authorised use only.** Deploy agents only on systems you own or have explicit written permission to monitor, and run all attack simulations in an isolated lab.
 
@@ -169,6 +169,8 @@ flowchart LR
 ### 1. Endpoint agent (Rust)
 A small, privileged, self-protecting sensor.
 
+**Implemented Linux slice:** the Rust loader and eBPF programs emit process, file and network events in the shared JSON shape. Authentication, service and persistence sensors, the local queue/governor, and the Windows agent remain planned.
+
 | Category | Windows | Linux |
 |---|---|---|
 | **Process** | ETW kernel/process providers, process-creation callbacks (driver) | eBPF (`execve`, `exit`, fork lineage) |
@@ -181,13 +183,13 @@ A small, privileged, self-protecting sensor.
 Agent responsibilities: collect → filter → enrich locally (hashes, lineage) → queue on disk → ship over mTLS. A **resource governor** caps CPU/RAM/IO, and a **local queue** survives network loss.
 
 ### 2. Ingestion gateway (Go)
-The initial gateway scaffold validates the documented JSON event shape and publishes accepted events to NATS JetStream. Agent authentication, Protobuf/gRPC transport, normalisation, rate limiting and back-pressure remain planned.
+The gateway validates one JSON event against the current schema and publishes accepted events to the durable NATS JetStream stream. Agent authentication, Protobuf/gRPC transport, normalisation, rate limiting and back-pressure remain planned.
 
 ### 3. Event bus
-NATS JetStream decouples ingestion from detection, absorbs spikes and lets multiple consumers (detection, storage, UEBA) read the same durable stream. Kafka/Redpanda remains an alternative for a later deployment profile.
+NATS JetStream decouples ingestion from consumers. The current ClickHouse consumer reads the durable event stream and acknowledges each event after the insert succeeds. Detection and UEBA consumers are not connected yet. Kafka/Redpanda remains an alternative for a later deployment profile.
 
 ### 4. Detection engine (Rust)
-Streaming engine that evaluates **Sigma rules** (via a converter/compiler) and native rules, including threshold and sequence logic. Rules are versioned and carry ATT&CK mappings, severity and approval metadata. Hot-reloads approved rules without restarts.
+The standalone Rust library parses and evaluates a documented Sigma subset against normalized JSON events. It supports selection conditions, common field modifiers, logsource filters and multi-rule evaluation with rule metadata. It is not yet consuming the event stream. Native rules, threshold/sequence logic, ATT&CK mappings and hot reload remain planned.
 
 ### 5. UEBA service (Python)
 Builds per-user, per-host and per-process baselines (logon patterns, rare binaries, unusual parent-child pairs, rare destinations) and emits an **explainable anomaly score** with its top contributing features. It runs off the hot path and consumes the bus. *(scikit-learn, PyOD, River, SHAP)*
@@ -199,7 +201,8 @@ Adds indicator matches (hashes, IPs, domains), vulnerability context (CISA KEV, 
 Links alerts and events by entity, process tree, time window and ATT&CK technique progression into one **evidence-linked incident timeline** (initial access → execution → persistence → credential access → lateral movement).
 
 ### 8. Storage
-- **ClickHouse or OpenSearch:** high-volume event and alert storage, fast hunting and investigation queries.
+- **ClickHouse:** the current event-store consumer persists searchable event envelope fields and the full event JSON in `sentinelforge.events`. Alert storage, query APIs and hunting are planned.
+- **OpenSearch:** a possible alternative or complementary search backend for a later deployment profile.
 - **PostgreSQL:** rules and versions, users and roles, incidents, policies, approvals, audit log.
 
 ### 9. Control plane (Go) and policy engine
@@ -345,7 +348,7 @@ SentinelForge builds on proven projects instead of reinventing commodity layers.
 
 ## 📁 Repository Structure
 
-> Planned monorepo layout, which will evolve as the code lands.
+> The repository includes the initial gateway, event store, Linux sensor and Sigma evaluator slices. The remaining directories below describe planned components.
 
 ```
 SentinelForge/
@@ -355,9 +358,9 @@ SentinelForge/
 │   ├── sensors-windows/    # ETW consumers; driver/ for the kernel component
 │   └── updater/            # signed update client
 ├── proto/                  # Protobuf: events, enrolment, commands
-├── gateway/                # Go: ingestion, auth, validation, normalisation
+├── gateway/                # Go: ingestion, JetStream consumer, ClickHouse event store
 ├── control-plane/          # Go: enrolment, policy, response, updates, RBAC
-├── detection/              # Rust: Sigma compiler, rule engine, sequence matcher
+├── detection/              # Rust: standalone Sigma parser and evaluator (subset)
 ├── correlation/            # attack-chain builder and timeline service
 ├── ml/                     # Python: UEBA features, models, explainability
 ├── assistant/              # Python: agent, read-only tools, guardrails
@@ -374,36 +377,44 @@ SentinelForge/
 
 ## 🚀 Getting Started
 
-> The full platform is not runnable yet. The current M1 gateway and NATS bus can be started separately as described in [`gateway/README.md`](gateway/README.md); the endpoint fleet and remaining services are still planned.
+> The full platform is not runnable yet. To run the current local ingestion and storage slice, start NATS and ClickHouse, then run the gateway and event-store consumer in separate terminals. The detection evaluator is a library and is not yet wired into this stream.
 
 ```bash
 git clone https://github.com/coldman07/SentinelForge.git
 cd SentinelForge
 
-# Start the backend stack (gateway, bus, storage, detection, dashboard)
-cp deploy/.env.example deploy/.env
-docker compose -f deploy/docker-compose.yml up -d --build
+# Start the local event bus and event store
+docker compose -f deploy/docker-compose.yml up -d nats clickhouse
 
-# Enrol an agent on a lab Linux host
-sudo ./sentinelforge-agent enroll --server https://<server>:8443 --token <ENROLL_TOKEN>
-sudo systemctl enable --now sentinelforge-agent
+# Terminal 1, from the repository root: start the gateway
+cd gateway
+go run .
 ```
+
+**Terminal 2, from the repository root:** start the ClickHouse consumer.
+
+```bash
+cd gateway
+go run ./cmd/event-store
+```
+
+Linux sensor build and run details are in [`agent/sensors-linux/README.md`](agent/sensors-linux/README.md). Unified agent enrollment and service installation are not implemented yet.
 
 **Recommended lab setup:** an isolated network with one Linux and one Windows VM as endpoints, plus a host with at least 8 GB RAM for the server stack.
 
 ## ⚙️ Configuration
 
-*(planned)* Illustrative settings:
+The local gateway and event store read these development settings:
 
 | Variable | Description | Example |
 |---|---|---|
-| `SF_BUS_URL` | Event bus address | `nats://bus:4222` |
-| `SF_EVENT_STORE_URL` | Event storage backend | `clickhouse://ch:9000/sentinelforge` |
-| `SF_DATABASE_URL` | Metadata database | `postgresql://sf:***@db:5432/sentinelforge` |
-| `SF_ASSISTANT_ENABLED` | Toggle the AI assistant | `true` |
-| `SF_LLM_PROVIDER` / `SF_LLM_MODEL` | Model backend | *(provider-specific)* |
-| `SF_RESPONSE_MODE` | `observe` or `approval` | `approval` |
-| `SF_AGENT_CPU_LIMIT` | Agent CPU ceiling (%) | `2` |
+| `SF_GATEWAY_ADDR` | Gateway listen address | `:8080` |
+| `SF_NATS_URL` | NATS server URL used by gateway and consumer | `nats://127.0.0.1:4222` |
+| `SF_CLICKHOUSE_URL` | ClickHouse HTTP endpoint | `http://127.0.0.1:8123` |
+| `SF_CLICKHOUSE_USER` | ClickHouse username (optional for local default setup) | `default` |
+| `SF_CLICKHOUSE_PASSWORD` | ClickHouse password (optional for local default setup) | *(empty)* |
+
+Database, assistant, response-mode and agent-governor settings remain planned.
 
 **Never commit secrets.** Use environment files excluded via `.gitignore`.
 
@@ -445,9 +456,12 @@ An EDR is a high-value target, so its own security is a first-class requirement.
 ## 🗺️ Roadmap
 
 - [x] Architecture and design
-- [ ] **M1** — Event schema (Protobuf), gateway skeleton, event bus
-- [ ] **M2** — Linux agent: eBPF process, file and network sensors
+- [x] **M1** — Initial event schema (Protobuf), Go gateway and NATS JetStream publishing
+- [x] **M2** — Linux eBPF process, file and network sensor slice
 - [ ] **M3** — Detection engine with Sigma support, event store, basic dashboard
+  - [x] ClickHouse event-store consumer
+  - [x] Standalone Rust Sigma parsing and evaluation library
+  - [ ] Connect detection evaluation to the event stream; persist alerts; build dashboard
 - [ ] **M4** — Windows agent: ETW telemetry
 - [ ] **M5** — UEBA baselines and explainable anomaly scoring
 - [ ] **M6** — Enrichment, ATT&CK mapping and attack-chain correlation

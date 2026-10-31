@@ -67,3 +67,47 @@ func (p *JetStreamPublisher) Publish(event ingest.Event) error {
 	}
 	return nil
 }
+
+// Consume delivers stream events to handler. A message is acknowledged only
+// after handler succeeds; failed writes are retried after a short delay.
+func (p *JetStreamPublisher) Consume(
+	ctx context.Context,
+	durableName string,
+	handler func(context.Context, []byte) error,
+) error {
+	subscription, err := p.js.PullSubscribe(
+		subjectRoot+".>",
+		durableName,
+		nats.ManualAck(),
+		nats.AckWait(30*time.Second),
+	)
+	if err != nil {
+		return fmt.Errorf("subscribe to JetStream: %w", err)
+	}
+
+	for ctx.Err() == nil {
+		messages, err := subscription.Fetch(1, nats.MaxWait(time.Second))
+		if errors.Is(err, nats.ErrTimeout) {
+			continue
+		}
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil
+			}
+			return fmt.Errorf("fetch JetStream message: %w", err)
+		}
+
+		for _, message := range messages {
+			if err := handler(ctx, message.Data); err != nil {
+				if nakErr := message.NakWithDelay(5 * time.Second); nakErr != nil {
+					return fmt.Errorf("reject failed event write: %w (write error: %v)", nakErr, err)
+				}
+				continue
+			}
+			if err := message.Ack(); err != nil {
+				return fmt.Errorf("acknowledge stored event: %w", err)
+			}
+		}
+	}
+	return nil
+}
