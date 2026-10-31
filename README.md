@@ -12,7 +12,7 @@
 ![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-*Final Year Project · B.Tech (CSE-CSF) · GLA University, Mathura · Session 2026-27 · Group G-2*
+*Final Year Project · B.Tech (CSE-CSF) · GLA University, Mathura · Session 2026-27 *
 
 </div>
 
