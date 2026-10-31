@@ -2,223 +2,221 @@
 
 # 🛡️ SentinelForge
 
-### An Agentic AI-Driven Endpoint Detection and Response (EDR) Framework
+### Agentic AI-driven Endpoint Detection & Response (EDR) for Windows and Linux
 
-*Cross-platform telemetry · Hybrid detection · Attack-chain correlation · Evidence-grounded AI assistance · Human-approved adaptive rules*
+*Kernel-level telemetry · Hybrid detection (Sigma + UEBA) · Attack-chain correlation · Evidence-grounded AI analyst · Human-approved adaptive rules*
 
-![Status](https://img.shields.io/badge/status-research%20prototype-orange)
-![Platforms](https://img.shields.io/badge/endpoints-Windows%20%7C%20Linux-blue)
-![Python](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)
-![FastAPI](https://img.shields.io/badge/API-FastAPI-009688?logo=fastapi&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-green)
-
-*Final Year Project · B.Tech (CSE-CSF) · GLA University, Mathura · Session 2026-27 *
+![Status](https://img.shields.io/badge/status-early%20development-orange)
+![License](https://img.shields.io/badge/license-Apache%202.0-blue)
+![Platforms](https://img.shields.io/badge/endpoints-Windows%20%7C%20Linux-informational)
+![Rust](https://img.shields.io/badge/agent-Rust-dea584?logo=rust&logoColor=white)
+![Go](https://img.shields.io/badge/backend-Go-00ADD8?logo=go&logoColor=white)
+![Python](https://img.shields.io/badge/ML%20%26%20AI-Python-3776AB?logo=python&logoColor=white)
+![TypeScript](https://img.shields.io/badge/dashboard-TypeScript-3178C6?logo=typescript&logoColor=white)
 
 </div>
 
 ---
 
-> ⚠️ **Authorised use only.** SentinelForge is a defensive research prototype. Deploy agents only on systems you own or have explicit written permission to monitor, and run all attack simulations inside an isolated, authorised laboratory.
+> 🚧 **Project status: early development.** SentinelForge is in its design and architecture stage. This document describes the target design and roadmap. Sections marked *(planned)* are not implemented yet. Nothing here should be read as shipped functionality.
+
+> ⚠️ **Authorised use only.** Deploy agents only on systems you own or have explicit written permission to monitor, and run all attack simulations in an isolated lab.
 
 ## 📑 Table of Contents
 
 1. [Overview](#-overview)
-2. [Motivation](#-motivation)
+2. [Why SentinelForge](#-why-sentinelforge)
 3. [Key Features](#-key-features)
-4. [System Architecture](#-system-architecture)
+4. [Architecture](#-architecture)
 5. [Component Deep Dive](#-component-deep-dive)
-6. [Unified Event Schema](#-unified-event-schema)
+6. [Event Schema](#-event-schema)
 7. [Detection Pipeline](#-detection-pipeline)
 8. [Agentic AI Assistant](#-agentic-ai-assistant)
-9. [Human-Guided Adaptive Rule Lifecycle](#-human-guided-adaptive-rule-lifecycle)
+9. [Adaptive Rule Lifecycle](#-adaptive-rule-lifecycle)
 10. [Policy-Controlled Response](#-policy-controlled-response)
-11. [Data Model](#-data-model)
-12. [API Overview](#-api-overview)
-13. [Tech Stack](#-tech-stack)
-14. [Repository Structure](#-repository-structure)
-15. [Getting Started](#-getting-started)
-16. [Configuration](#-configuration)
-17. [Evaluation Methodology](#-evaluation-methodology)
-18. [Security & Threat Model](#-security--threat-model-of-the-framework-itself)
-19. [Roadmap](#-roadmap)
-20. [Testing](#-testing)
-21. [Team](#-team)
-22. [License & Disclaimer](#-license--disclaimer)
+11. [Tech Stack](#-tech-stack)
+12. [Reused Open-Source Components](#-reused-open-source-components)
+13. [Repository Structure](#-repository-structure)
+14. [Getting Started](#-getting-started)
+15. [Configuration](#-configuration)
+16. [Evaluation & Benchmarking](#-evaluation--benchmarking)
+17. [Security Model](#-security-model-of-the-edr-itself)
+18. [Roadmap](#-roadmap)
+19. [Contributing](#-contributing)
+20. [License & Disclaimer](#-license--disclaimer)
 
 ---
 
 ## 🔎 Overview
 
-**SentinelForge** is an AI-assisted Endpoint Detection and Response (EDR) framework that monitors **Windows and Linux** endpoints through one unified platform.
+**SentinelForge** is an open-source EDR platform that monitors **Windows and Linux** endpoints through one unified pipeline.
 
-Lightweight agents collect process, authentication, file, service, persistence, and network events. A central service validates and normalises this telemetry into a common schema. The platform then combines **deterministic rule-based detection** with **User and Entity Behaviour Analytics (UEBA)**, enriches alerts with **threat-intelligence** and authorised vulnerability context, and uses **attack-chain correlation** to link related events into evidence-backed incident timelines.
+A lightweight native agent collects process, authentication, file, service, persistence and network telemetry. A gateway validates and normalises events into a common schema and streams them to a detection engine that combines **Sigma and native rules** with **User and Entity Behaviour Analytics (UEBA)**. Alerts are enriched with threat-intelligence and vulnerability context, then **correlated into attack-chain incident timelines**.
 
-An **agentic AI assistant** helps analysts retrieve evidence, interpret alerts, and draft investigation summaries. A **human-guided adaptive detection workflow** lets validated anomalies become candidate rules that must pass schema validation, replay testing, review, and approval before they are ever deployed.
+An **agentic AI assistant** helps analysts retrieve evidence, explain alerts and draft investigation summaries, using read-only tools and citing the underlying events. A **human-approved adaptive rule workflow** turns validated novel behaviour into candidate detections that must pass validation, replay testing and review before they are ever deployed.
 
-The design deliberately emphasises **explainability, auditability, and controlled response** over unrestricted autonomous action.
+The design deliberately favours **explainability, auditability and controlled response** over unrestricted autonomous action.
 
-## 💡 Motivation
+## 💡 Why SentinelForge
 
-| Problem | SentinelForge's answer |
+| Problem | Approach |
 |---|---|
-| Static rules miss novel behaviour | UEBA anomaly scoring alongside rules |
-| Anomaly detectors raise alerts with no context | Threat-intel enrichment + attack-chain timelines |
-| Analysts spend long hours stitching evidence together | Agentic assistant that retrieves and summarises evidence |
-| Auto-generated detections are risky to ship | Validate → replay-test → review → approve → version → roll back |
-| Autonomous response can cause damage | Role-based permissions, approval gates, audit records |
+| Static rules miss novel behaviour | UEBA anomaly scoring alongside Sigma and native rules |
+| Anomaly alerts arrive without context | Threat-intel enrichment and attack-chain timelines |
+| Analysts spend hours stitching evidence together | AI assistant that retrieves evidence and cites event IDs |
+| Auto-generated detections are risky | Validate → replay-test → review → approve → version → roll back |
+| Autonomous response can cause damage | RBAC, policy-as-code approval gates, tamper-evident audit log |
+| Agent updates can brick endpoints | Signed, staged rollouts with automatic rollback *(planned)* |
 
 ## ✨ Key Features
 
-- **Cross-platform telemetry** — Windows (Event Log / ETW) and Linux (journald / auditd) under a shared event schema.
-- **Hybrid detection** — deterministic rules + UEBA anomaly scoring + threat-intelligence context.
-- **Attack-chain correlation** — evidence-linked incident timelines built from related events.
-- **Agentic AI assistant** — natural-language investigation with evidence-grounded summaries.
-- **Adaptive rule lifecycle** — generate, validate, replay-test, approve, version, and roll back candidate rules.
-- **Policy-controlled response** — role permissions, approval gates, and tamper-evident audit records.
-- **Analyst dashboard** — alerts, incidents, timelines, entity views, and rule management in one UI.
-- **Measurable by design** — built-in evaluation harness for precision, recall, FPR, latency, and overhead.
+- **Native cross-platform agent** — Rust agent using eBPF on Linux and ETW (plus an optional kernel driver) on Windows.
+- **Hybrid detection** — Sigma rules, native rules, UEBA anomaly scores and threat-intel context.
+- **Attack-chain correlation** — evidence-linked incident timelines mapped to MITRE ATT&CK.
+- **Agentic AI analyst** — natural-language investigation with citations and read-only tools.
+- **Adaptive rule lifecycle** — generate, validate, replay-test, approve, version and roll back detections.
+- **Policy-controlled response** — role permissions and approval gates enforced as code (OPA).
+- **Secure by design** — mTLS, signed updates, hash-chained audit log, agent self-protection *(planned)*.
+- **Measurable** — built-in benchmarking for precision, recall, FPR, latency and agent overhead.
 
-## 🏗️ System Architecture
+## 🏗️ Architecture
 
-### High-level view
+### System overview
 
 ```
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                               ENDPOINT LAYER                                 │
-│                                                                              │
-│   ┌─────────────────────────┐              ┌─────────────────────────┐       │
-│   │     Windows Agent       │              │       Linux Agent       │       │
-│   │  • Event Log / ETW      │              │  • journald / auditd    │       │
-│   │  • Process, Auth, File  │              │  • Process, Auth, File  │       │
-│   │  • Service, Persistence │              │  • Service, Persistence │       │
-│   │  • Network              │              │  • Network              │       │
-│   └────────────┬────────────┘              └────────────┬────────────┘       │
-└────────────────┼────────────────────────────────────────┼────────────────────┘
-                 │        TLS · Agent auth · Batching     │
-                 ▼                                        ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                           INGESTION & NORMALISATION                          │
-│        FastAPI Ingestion API → Pydantic validation → Common Event Schema     │
-└────────────────────────────────────┬─────────────────────────────────────────┘
-                                     ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│                                STORAGE LAYER                                 │
-│     Events · Alerts · Incidents · Entities · Baselines · Rules · Audit log   │
-│                         (PostgreSQL / SQLite)                                │
-└───────┬───────────────────────┬───────────────────────┬──────────────────────┘
-        ▼                       ▼                       ▼
-┌───────────────┐      ┌─────────────────┐      ┌───────────────────┐
-│  RULE ENGINE  │      │  UEBA ENGINE    │      │  THREAT INTEL &   │
-│  (deterministic)     │  (scikit-learn) │      │  VULN CONTEXT     │
-└───────┬───────┘      └────────┬────────┘      └─────────┬─────────┘
-        └───────────────┬───────┴─────────────────────────┘
-                        ▼
-              ┌───────────────────┐
-              │  ALERT SCORING &  │
-              │   ENRICHMENT      │
-              └─────────┬─────────┘
-                        ▼
-              ┌───────────────────┐
-              │ ATTACK-CHAIN      │
-              │ CORRELATION       │──► Incident timelines
-              └─────────┬─────────┘
-                        │
-        ┌───────────────┼──────────────────────────┐
-        ▼               ▼                          ▼
-┌───────────────┐ ┌──────────────────┐   ┌────────────────────┐
-│ ANALYST       │ │ AGENTIC AI       │   │ ADAPTIVE RULE      │
-│ DASHBOARD     │◄┤ ASSISTANT        │──►│ WORKFLOW           │
-│ (React)       │ │ (read-only tools)│   │ (human-approved)   │
-└───────┬───────┘ └──────────────────┘   └────────────────────┘
-        ▼
-┌──────────────────────────────────────────────────────────────────────────────┐
-│          POLICY-CONTROLLED RESPONSE  (RBAC · approval gates · audit)         │
-└──────────────────────────────────────────────────────────────────────────────┘
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                                  ENDPOINTS                                       │
+│                                                                                  │
+│   ┌──────────────────────────────┐        ┌──────────────────────────────┐       │
+│   │        Windows Agent         │        │         Linux Agent          │       │
+│   │  Rust core                   │        │  Rust core                   │       │
+│   │  • ETW providers             │        │  • eBPF sensors (aya)        │       │
+│   │  • Kernel driver (optional)  │        │  • auditd / fanotify fallback│       │
+│   │  • Self-protection           │        │  • Self-protection           │       │
+│   │  • Local queue + governor    │        │  • Local queue + governor    │       │
+│   └──────────────┬───────────────┘        └──────────────┬───────────────┘       │
+└──────────────────┼───────────────────────────────────────┼───────────────────────┘
+                   │         gRPC + Protobuf over mTLS     │
+                   ▼                                       ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│                          INGESTION GATEWAY  (Go)                                 │
+│    Agent auth · schema validation · normalisation · rate limiting · enrolment    │
+└───────────────────────────────────────┬──────────────────────────────────────────┘
+                                        ▼
+                       ┌───────────────────────────────┐
+                       │   EVENT BUS (NATS / Kafka)    │
+                       └───┬───────────┬───────────┬───┘
+                           ▼           ▼           ▼
+              ┌─────────────────┐ ┌──────────┐ ┌────────────────┐
+              │ DETECTION ENGINE│ │ EVENT    │ │ UEBA SERVICE   │
+              │ (Rust)          │ │ STORE    │ │ (Python)       │
+              │ Sigma + native  │ │ ClickHouse│ │ baselines,     │
+              │ rules, sequences│ │ / Open-  │ │ anomaly scores,│
+              │                 │ │ Search   │ │ explanations   │
+              └────────┬────────┘ └────┬─────┘ └───────┬────────┘
+                       └───────────────┼───────────────┘
+                                       ▼
+                     ┌───────────────────────────────────┐
+                     │  ENRICHMENT & ALERT SCORING       │
+                     │  threat intel · KEV/EPSS · ATT&CK │
+                     └─────────────────┬─────────────────┘
+                                       ▼
+                     ┌───────────────────────────────────┐
+                     │  ATTACK-CHAIN CORRELATION         │──► Incident timelines
+                     └─────────────────┬─────────────────┘
+                                       │
+          ┌────────────────────────────┼─────────────────────────────┐
+          ▼                            ▼                             ▼
+┌───────────────────┐      ┌─────────────────────┐       ┌────────────────────────┐
+│ ANALYST DASHBOARD │◄────►│ AI ASSISTANT        │──────►│ ADAPTIVE RULE WORKFLOW │
+│ (React/TypeScript)│      │ (Python, read-only  │       │ validate → replay →    │
+│                   │      │  tools, guardrails) │       │ approve → version      │
+└─────────┬─────────┘      └─────────────────────┘       └────────────────────────┘
+          ▼
+┌──────────────────────────────────────────────────────────────────────────────────┐
+│     CONTROL PLANE (Go) + POLICY ENGINE (OPA)                                     │
+│     RBAC · approval gates · response orchestration · signed agent updates        │
+│     PostgreSQL: rules, users, incidents, policies, hash-chained audit log        │
+└──────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ### Data flow
 
 ```mermaid
 flowchart LR
-    A[Endpoint Agents] -->|batched, authenticated| B[Ingestion API]
-    B --> C[Schema validation & normalisation]
-    C --> D[(Event store)]
-    D --> E[Rule engine]
-    D --> F[UEBA engine]
-    G[Threat intel / vuln context] --> H
-    E --> H[Alert scoring & enrichment]
+    A[Rust agents<br/>eBPF / ETW] -->|gRPC + mTLS| B[Go ingestion gateway]
+    B --> C[(Event bus<br/>NATS / Kafka)]
+    C --> D[Detection engine<br/>Sigma + native rules]
+    C --> E[(Event store<br/>ClickHouse / OpenSearch)]
+    C --> F[UEBA service]
+    G[Threat intel, KEV, EPSS] --> H
+    D --> H[Alert scoring and enrichment]
     F --> H
     H --> I[Attack-chain correlation]
-    I --> J[(Incidents & timelines)]
+    I --> J[(Incidents and timelines)]
     J --> K[Analyst dashboard]
-    J --> L[Agentic AI assistant]
+    J --> L[AI assistant<br/>read-only tools]
     L --> M[Candidate rule generator]
-    M --> N{Human review & approval}
-    N -->|approved| E
-    K --> O[Response policy engine]
-    O -->|approval gate| A
+    M --> N{Human review and approval}
+    N -->|approved + versioned| D
+    K --> O[Policy engine OPA]
+    O -->|approval gate| P[Control plane]
+    P -->|signed commands| A
 ```
 
 ## 🧩 Component Deep Dive
 
-### 1. Endpoint agents
-Lightweight collectors that gather only *selected* telemetry to limit overhead and privacy exposure.
+### 1. Endpoint agent (Rust)
+A small, privileged, self-protecting sensor.
 
-| Category | Windows source | Linux source |
+| Category | Windows | Linux |
 |---|---|---|
-| **Process** | ETW / Security 4688, Sysmon (optional) | auditd `execve`, `/proc` |
-| **Authentication** | Security 4624/4625/4648/4672 | journald (sshd, sudo, PAM), `auth` logs |
-| **File** | ETW file events, selected-path monitoring | auditd watches, inotify |
-| **Service** | System 7045, service control events | systemd unit events |
-| **Persistence** | Run keys, scheduled tasks, services | cron, systemd units, shell profiles, authorized_keys |
-| **Network** | ETW network events | auditd/`ss` snapshots, connection logs |
+| **Process** | ETW kernel/process providers, process-creation callbacks (driver) | eBPF (`execve`, `exit`, fork lineage) |
+| **Authentication** | Security log (4624/4625/4648/4672) via ETW/EvtSubscribe | journald (sshd, sudo, PAM), auth logs |
+| **File** | ETW file providers, minifilter (optional) | eBPF / fanotify on selected paths |
+| **Service** | Service install/start events (7045, SCM) | systemd unit events |
+| **Persistence** | Run keys, scheduled tasks, services, WMI | cron, systemd units, shell profiles, `authorized_keys` |
+| **Network** | ETW network providers | eBPF socket tracing (connect/accept/DNS) |
 
-Agent responsibilities: collect → filter → batch → sign/authenticate → ship, with local buffering when the server is unreachable and a configurable resource ceiling.
+Agent responsibilities: collect → filter → enrich locally (hashes, lineage) → queue on disk → ship over mTLS. A **resource governor** caps CPU/RAM/IO, and a **local queue** survives network loss.
 
-### 2. Ingestion service
-A FastAPI service that authenticates agents, validates payloads with Pydantic, normalises into the common schema, rejects malformed or oversized events, and writes to storage.
+### 2. Ingestion gateway (Go)
+Authenticates agents, validates Protobuf payloads against the schema, normalises events, applies rate limits and back-pressure, and publishes to the event bus.
 
-### 3. Storage layer
-Relational store (PostgreSQL for the full stack, SQLite for quick local runs) holding events, alerts, incidents, entity profiles, baselines, rules and versions, and the audit log.
+### 3. Event bus
+NATS JetStream or Kafka decouples ingestion from detection, absorbs spikes and lets multiple consumers (detection, storage, UEBA) read the same stream.
 
-### 4. Rule engine
-Deterministic, declarative rules evaluated against normalised events (single-event and sequence/threshold rules). Rules are versioned, schema-validated, and carry metadata (severity, description, ATT&CK mapping, author, approval record).
+### 4. Detection engine (Rust)
+Streaming engine that evaluates **Sigma rules** (via a converter/compiler) and native rules, including threshold and sequence logic. Rules are versioned and carry ATT&CK mappings, severity and approval metadata. Hot-reloads approved rules without restarts.
 
-### 5. UEBA engine
-Learns per-user and per-host baselines (e.g., login hours, process lineage, rare binaries, unusual parent-child pairs, network destinations) and produces an **explainable anomaly score** using scikit-learn models. Every score ships with the top contributing features so an analyst can see *why* it fired.
+### 5. UEBA service (Python)
+Builds per-user, per-host and per-process baselines (logon patterns, rare binaries, unusual parent-child pairs, rare destinations) and emits an **explainable anomaly score** with its top contributing features. It runs off the hot path and consumes the bus. *(scikit-learn, PyOD, River, SHAP)*
 
-### 6. Threat-intelligence & vulnerability context
-Enriches alerts with indicator matches (hashes, IPs, domains) and authorised vulnerability context for the affected host, so severity reflects real exposure.
+### 6. Enrichment & scoring
+Adds indicator matches (hashes, IPs, domains), vulnerability context (CISA KEV, EPSS, NVD/OSV) and asset criticality, then computes a final prioritised alert score.
 
 ### 7. Attack-chain correlation
-Links related alerts and events — by entity, process tree, time window, and technique progression — into a single **evidence-linked incident timeline** (e.g., initial access → execution → persistence → credential access → lateral movement).
+Links alerts and events by entity, process tree, time window and ATT&CK technique progression into one **evidence-linked incident timeline** (initial access → execution → persistence → credential access → lateral movement).
 
-### 8. Analyst dashboard
-React-based UI for alert triage, incident timelines, entity/host views, rule management, approval queues, and the assistant chat panel.
+### 8. Storage
+- **ClickHouse or OpenSearch:** high-volume event and alert storage, fast hunting and investigation queries.
+- **PostgreSQL:** rules and versions, users and roles, incidents, policies, approvals, audit log.
 
-### 9. Agentic AI assistant
-See [Agentic AI Assistant](#-agentic-ai-assistant).
+### 9. Control plane (Go) and policy engine
+Handles enrolment, configuration, signed agent/rule updates, response orchestration and RBAC. **Open Policy Agent (OPA)** evaluates approval policies as code.
 
-### 10. Adaptive rule workflow
-See [Human-Guided Adaptive Rule Lifecycle](#-human-guided-adaptive-rule-lifecycle).
+### 10. Analyst dashboard (React + TypeScript)
+Alert triage, incident timelines, host and user views, hunting, rule management, approval queues and the assistant chat.
 
-### 11. Response policy engine
-See [Policy-Controlled Response](#-policy-controlled-response).
+## 📐 Event Schema
 
-## 📐 Unified Event Schema
-
-All telemetry is normalised into one cross-platform schema (illustrative example):
+Telemetry is normalised into a unified cross-platform schema, designed to map cleanly to **OCSF** (and ECS). Illustrative example:
 
 ```json
 {
   "event_id": "b6f1c9e2-3a4d-4c1e-9f0a-7e5d2c1b8a90",
   "timestamp": "2026-01-15T10:42:07.318Z",
-  "host": {
-    "host_id": "win-lab-01",
-    "os": "windows",
-    "os_version": "10.0.19045",
-    "agent_version": "0.1.0"
-  },
+  "host": { "host_id": "win-lab-01", "os": "windows", "os_version": "10.0.19045", "agent_version": "0.1.0" },
   "category": "process",
   "action": "create",
   "user": { "name": "labuser", "sid": "S-1-5-21-...", "privilege": "standard" },
@@ -230,322 +228,252 @@ All telemetry is normalised into one cross-platform schema (illustrative example
     "hash": { "sha256": "..." },
     "parent": { "pid": 2210, "name": "winword.exe" }
   },
-  "network": null,
-  "file": null,
   "raw": { "source": "ETW", "provider": "Microsoft-Windows-Kernel-Process" },
   "schema_version": "1.0"
 }
 ```
 
-Supported categories: `process`, `authentication`, `file`, `service`, `persistence`, `network`.
+Categories: `process`, `authentication`, `file`, `service`, `persistence`, `network`. The wire format is Protobuf; JSON is shown for readability.
 
 ## 🎯 Detection Pipeline
 
-1. **Ingest & normalise** — validate against the shared schema.
-2. **Rule matching** — deterministic detections against known suspicious patterns.
-3. **UEBA scoring** — compare behaviour with entity baselines; produce score plus feature attributions.
-4. **Enrichment** — attach threat-intel matches and vulnerability context.
-5. **Alert scoring** — combine rule severity, anomaly score, and context into a prioritised alert.
-6. **Correlation** — group alerts into incidents and build the attack-chain timeline.
-7. **Analyst workflow** — triage in dashboard, investigate with the assistant, decide on response.
+1. **Collect** — agent sensors emit raw events.
+2. **Ingest & normalise** — gateway validates and maps to the shared schema.
+3. **Rule matching** — Sigma and native rules evaluate the stream.
+4. **UEBA scoring** — behaviour is compared with entity baselines.
+5. **Enrichment** — threat-intel, vulnerability and asset context are attached.
+6. **Scoring** — severity, anomaly score and context produce a prioritised alert.
+7. **Correlation** — alerts are grouped into incidents with ATT&CK-mapped timelines.
+8. **Analyst workflow** — triage, investigate with the assistant, decide on response.
 
 ## 🤖 Agentic AI Assistant
 
-The assistant is an **analyst co-pilot, not an autonomous operator.**
+An **analyst co-pilot, not an autonomous operator.**
 
-**What it can do**
-- Answer natural-language questions ("What did `host-07` do in the 10 minutes before this alert?").
-- Retrieve events, alerts, entity history, and incident timelines via tools.
-- Explain why an alert fired (rule logic, anomaly features, intel matches).
-- Produce investigation summaries that **cite the underlying event IDs**.
-- Propose candidate detection rules for analyst review.
+**Capabilities**
+- Natural-language questions ("What did `host-07` do in the 10 minutes before this alert?").
+- Event, alert, entity and incident retrieval through tools.
+- Explanations of why an alert fired (rule logic, anomaly features, intel matches).
+- Investigation summaries that **cite underlying event IDs**.
+- Candidate-rule proposals for human review.
 
-**Design guardrails**
-- **Read-only tool set** by default — retrieval and analysis tools only.
-- **Evidence-grounded outputs** — claims must reference stored events; unsupported statements are flagged.
-- **No direct response actions** — any consequential action is routed through the policy engine and human approval.
-- **Prompt-injection awareness** — telemetry content (command lines, file names, log text) is treated as *untrusted data*, never as instructions.
-- **Full logging** — prompts, tool calls, and outputs are recorded in the audit log.
+**Guardrails**
+- **Read-only tools** by default, exposed through a narrow API (MCP-style).
+- **Evidence-grounded answers** — claims must reference stored events; unsupported claims are flagged.
+- **No direct response actions** — consequential actions go through the policy engine and human approval.
+- **Prompt-injection resistant** — telemetry (command lines, file names, log text) is treated as *untrusted data*, never as instructions.
+- **Full audit** — prompts, tool calls and outputs are logged.
+- **Model flexibility** — works with hosted or local models (e.g., Ollama/vLLM) for privacy-sensitive deployments.
 
-```
-Analyst question ─► Planner ─► Tool calls (search_events, get_incident, get_entity,
-                                           get_alert_explanation, intel_lookup)
-                       ▲                         │
-                       └──── evidence ◄──────────┘
-                                   ▼
-                  Grounded answer with event-ID citations
-```
+## 🔄 Adaptive Rule Lifecycle
 
-## 🔄 Human-Guided Adaptive Rule Lifecycle
-
-Validated novel behaviour can be turned into detection rules — **but never deployed automatically**.
+Validated novel behaviour can become a detection, **but is never deployed automatically**.
 
 ```
- ┌──────────┐   ┌───────────┐   ┌─────────────┐   ┌──────────┐   ┌──────────┐   ┌──────────┐
- │ Generate │──►│  Schema   │──►│ Replay-test │──►│  Human   │──►│ Version  │──►│  Deploy  │
- │ candidate│   │ validation│   │ (+ve & benign)  │  review  │   │ & sign   │   │ (staged) │
- └──────────┘   └───────────┘   └─────────────┘   └────┬─────┘   └──────────┘   └────┬─────┘
-                                                       │ reject                      │
-                                                       ▼                             ▼
-                                                  Archived                    Monitor → Rollback
+Generate ─► Schema validation ─► Replay test ─► Human review ─► Approve ─► Version & sign ─► Staged deploy
+                                 (malicious +      │                                              │
+                                  benign data)     └─► Reject / archive              Monitor ─► Rollback
 ```
 
 | Stage | Purpose |
 |---|---|
 | **Generate** | Draft a candidate from a validated anomaly or analyst request |
-| **Schema validation** | Reject malformed rules, unknown fields, unsafe patterns |
-| **Replay testing** | Run against labelled malicious data (must detect) and benign data (must not over-alert) |
-| **Review** | Analyst inspects logic, test results, and expected noise |
+| **Schema validation** | Reject malformed rules, unknown fields, unsafe or overly broad patterns |
+| **Replay testing** | Must detect labelled malicious data and stay quiet on benign data |
+| **Review** | Analyst inspects logic, test results and expected noise |
 | **Approval** | Authorised approver signs off; recorded in the audit log |
-| **Versioning** | Immutable versions with diffs and authorship |
+| **Versioning** | Immutable, signed versions with diffs and authorship |
 | **Rollback** | One-step revert to any prior approved version |
 
 ## 🚦 Policy-Controlled Response
 
-Response actions are **gated, role-aware, and audited**.
+Response actions are **gated, role-aware and audited**, with policies expressed as code in OPA.
 
 | Role | Typical permissions |
 |---|---|
-| **Viewer** | Read alerts, incidents, dashboards |
-| **Analyst** | Investigate, annotate, use assistant, propose rules, request response |
+| **Viewer** | Read alerts, incidents and dashboards |
+| **Analyst** | Investigate, annotate, use the assistant, propose rules, request response |
 | **Approver / Lead** | Approve rules and response actions |
-| **Admin** | Manage users, policies, agent enrolment |
+| **Admin** | Manage users, policies and agent enrolment |
 
-Example response actions (lab scope): tag host, isolate host (simulated/network policy), collect additional artefacts, kill a process, disable an account — each requiring the policy-defined approval level, with justification and an immutable audit entry.
-
-## 🗄️ Data Model
-
-Core entities (simplified):
-
-```
-Host ──< Event >── User
-  │         │
-  │         └──< Alert >──┐
-  │                       ├──> Incident ──< TimelineEntry
-  └──< Baseline           │
-                          └──> Rule ──< RuleVersion ──< ApprovalRecord
-
-AuditLog (append-only):  actor · action · target · justification · timestamp · hash-chain
-```
-
-## 🔌 API Overview
-
-> Endpoint names are indicative and will be finalised during implementation.
-
-| Area | Example endpoints |
-|---|---|
-| **Agents** | `POST /v1/agents/enroll`, `POST /v1/ingest/events`, `GET /v1/agents/{id}/config` |
-| **Events** | `GET /v1/events`, `GET /v1/events/{id}` |
-| **Alerts** | `GET /v1/alerts`, `PATCH /v1/alerts/{id}` |
-| **Incidents** | `GET /v1/incidents`, `GET /v1/incidents/{id}/timeline` |
-| **Entities** | `GET /v1/hosts/{id}`, `GET /v1/users/{id}/baseline` |
-| **Rules** | `GET/POST /v1/rules`, `POST /v1/rules/{id}/test`, `POST /v1/rules/{id}/approve`, `POST /v1/rules/{id}/rollback` |
-| **Assistant** | `POST /v1/assistant/query` |
-| **Response** | `POST /v1/response/requests`, `POST /v1/response/{id}/approve` |
-| **Audit** | `GET /v1/audit` |
-
-Interactive docs are served by FastAPI at `/docs` (Swagger UI) and `/redoc`.
+Example actions: tag host, network-isolate host, collect additional artefacts, kill process, disable account. Each requires the policy-defined approval level, a justification and an immutable audit entry.
 
 ## 🧰 Tech Stack
 
 | Layer | Technology |
 |---|---|
-| Language | Python 3.11+ |
-| Backend API | FastAPI, Pydantic |
-| ML / UEBA | scikit-learn |
-| Storage | PostgreSQL (full stack) / SQLite (local dev) |
-| Dashboard | React (or lightweight web dashboard) |
-| AI orchestration | LangChain (optional) |
-| Telemetry sources | Windows Event Log / ETW · Linux journald / auditd |
-| Packaging | Docker Compose |
-| Testing & VCS | pytest · Git |
+| **Endpoint agent** | Rust |
+| **Linux sensors** | eBPF (`aya`, C where required), auditd/fanotify fallback |
+| **Windows sensors** | ETW, optional kernel minifilter/driver |
+| **Transport** | gRPC + Protobuf over mTLS |
+| **Event bus** | NATS JetStream or Kafka/Redpanda |
+| **Ingestion & control plane** | Go |
+| **Detection engine** | Rust (Sigma + native rules) |
+| **UEBA / ML** | Python: scikit-learn, PyOD, River, SHAP |
+| **AI assistant** | Python: LangGraph or PydanticAI, MCP tools, Ollama/vLLM |
+| **Event storage** | ClickHouse and/or OpenSearch |
+| **Metadata storage** | PostgreSQL (+ pgvector for retrieval) |
+| **Policy** | Open Policy Agent (OPA) |
+| **Dashboard** | TypeScript, React |
+| **Observability** | OpenTelemetry, Prometheus, Grafana |
+| **Deployment** | Docker Compose (dev), Kubernetes + Helm (prod) |
+| **Testing** | cargo test, go test, pytest, Atomic Red Team / Caldera |
+
+## ♻️ Reused Open-Source Components
+
+SentinelForge builds on proven projects instead of reinventing commodity layers. *Verify each project's current license and maintenance status before integrating.*
+
+| Need | Projects |
+|---|---|
+| Linux eBPF sensing | Tetragon, Falco (libs), Tracee, `aya`, `cilium/ebpf` |
+| Windows telemetry | ETW (`ferrisetw`, krabsetw), osquery |
+| Detection content | Sigma (SigmaHQ, pySigma), YARA / yara-x, MITRE ATT&CK |
+| Schema | OCSF, ECS |
+| Pipeline | Vector, OpenTelemetry Collector, NATS, Kafka |
+| Storage | ClickHouse, OpenSearch, PostgreSQL, DuckDB |
+| Threat intel | abuse.ch, AlienVault OTX, MISP, OpenCTI |
+| Vulnerability context | NVD, CISA KEV, EPSS, OSV |
+| ML | scikit-learn, PyOD, River, SHAP |
+| AI | LangGraph, PydanticAI, Ollama, vLLM, NeMo Guardrails / Llama Guard |
+| Policy & integrity | OPA, TUF, Sigstore/cosign, immudb |
+| Forensics / SOAR | Velociraptor, Timesketch, Shuffle, DFIR-IRIS |
+| Testing | Atomic Red Team, Caldera, OTRF Security-Datasets, EVTX-ATTACK-SAMPLES |
+
+> **License note:** some components (e.g., Wazuh, Velociraptor, MISP, Chainsaw, Hayabusa) are GPL/AGPL. Run them as separate services, or use them as references, rather than linking them into SentinelForge, to keep the core under Apache-2.0.
+
+**What SentinelForge builds itself:** the agent runtime (governor, self-protection, update logic), unified normalisation and correlation engine, the adaptive rule lifecycle, the guardrailed evidence-grounded assistant, and the approval-based response workflow.
 
 ## 📁 Repository Structure
 
-> Proposed layout — adjust as the codebase evolves.
+> Planned monorepo layout, which will evolve as the code lands.
 
 ```
-sentinelforge/
-├── agents/
-│   ├── windows/            # Event Log / ETW collector
-│   ├── linux/              # journald / auditd collector
-│   └── common/             # batching, buffering, transport, config
-├── server/
-│   ├── api/                # FastAPI routers (ingest, alerts, incidents, rules, ...)
-│   ├── core/               # config, auth, RBAC, logging
-│   ├── schema/             # Pydantic models, event schema versions
-│   ├── ingestion/          # validation & normalisation
-│   ├── detection/
-│   │   ├── rules/          # rule engine & loader
-│   │   └── ueba/           # baselines, features, models, explainability
-│   ├── intel/              # threat-intel & vulnerability context
-│   ├── correlation/        # attack-chain builder & timelines
-│   ├── assistant/          # agent, tools, guardrails, prompts
-│   ├── rulelifecycle/      # generate, validate, replay, approve, version, rollback
-│   ├── response/           # policy engine, approval gates
-│   ├── audit/              # append-only, hash-chained audit log
-│   └── db/                 # models, migrations
-├── dashboard/              # React UI
-├── rules/                  # shipped detection rules (YAML/JSON)
-├── datasets/               # labelled lab scenarios & benign baselines
-├── evaluation/             # metrics harness, scenario runners, reports
-├── deploy/                 # docker-compose, env templates
-├── docs/                   # design docs, diagrams, report
-├── tests/                  # pytest suites (unit, integration, replay)
-├── docker-compose.yml
-├── LICENSE
-└── README.md
+SentinelForge/
+├── agent/
+│   ├── core/               # Rust: runtime, queue, governor, transport
+│   ├── sensors-linux/      # eBPF programs and loaders
+│   ├── sensors-windows/    # ETW consumers; driver/ for the kernel component
+│   └── updater/            # signed update client
+├── proto/                  # Protobuf: events, enrolment, commands
+├── gateway/                # Go: ingestion, auth, validation, normalisation
+├── control-plane/          # Go: enrolment, policy, response, updates, RBAC
+├── detection/              # Rust: Sigma compiler, rule engine, sequence matcher
+├── correlation/            # attack-chain builder and timeline service
+├── ml/                     # Python: UEBA features, models, explainability
+├── assistant/              # Python: agent, read-only tools, guardrails
+├── rulelifecycle/          # generate, validate, replay, approve, version, roll back
+├── dashboard/              # React + TypeScript UI
+├── rules/                  # Sigma and native rule packs
+├── policy/                 # OPA/Rego policies
+├── datasets/               # labelled attack scenarios and benign baselines
+├── evaluation/             # benchmark harness and reports
+├── deploy/                 # docker-compose, Helm charts, env templates
+├── docs/                   # architecture, ADRs, threat model
+└── tests/                  # integration and replay tests
 ```
 
 ## 🚀 Getting Started
 
-### Prerequisites
-- Docker & Docker Compose
-- Python 3.11+
-- A Windows and a Linux VM (or hosts) inside an **isolated lab network**
-- 8 GB RAM minimum on the host running the stack
+> *(planned)* The platform is not runnable yet. This section shows the intended workflow and will be filled in as components land.
 
-### 1. Clone
 ```bash
-git clone https://github.com/<your-username>/SentinelForge.git
+git clone https://github.com/coldman07/SentinelForge.git
 cd SentinelForge
-```
 
-### 2. Configure environment
-```bash
+# Start the backend stack (gateway, bus, storage, detection, dashboard)
 cp deploy/.env.example deploy/.env
-# Edit secrets, database URL, and assistant/LLM settings
+docker compose -f deploy/docker-compose.yml up -d --build
+
+# Enrol an agent on a lab Linux host
+sudo ./sentinelforge-agent enroll --server https://<server>:8443 --token <ENROLL_TOKEN>
+sudo systemctl enable --now sentinelforge-agent
 ```
 
-### 3. Start the platform
-```bash
-docker compose up -d --build
-```
-
-| Service | URL |
-|---|---|
-| Dashboard | `http://localhost:3000` |
-| API | `http://localhost:8000` |
-| API docs | `http://localhost:8000/docs` |
-
-### 4. Enrol an agent
-
-**Linux**
-```bash
-cd agents/linux
-pip install -r requirements.txt
-python -m sentinelforge_agent --server https://<server>:8000 --enroll-token <TOKEN>
-```
-
-**Windows (PowerShell, elevated)**
-```powershell
-cd agents\windows
-pip install -r requirements.txt
-python -m sentinelforge_agent --server https://<server>:8000 --enroll-token <TOKEN>
-```
-
-### 5. Local development without Docker
-```bash
-python -m venv .venv && source .venv/bin/activate
-pip install -r server/requirements.txt
-export SF_DATABASE_URL=sqlite:///./sentinelforge.db
-uvicorn server.api.main:app --reload
-```
+**Recommended lab setup:** an isolated network with one Linux and one Windows VM as endpoints, plus a host with at least 8 GB RAM for the server stack.
 
 ## ⚙️ Configuration
 
+*(planned)* Illustrative settings:
+
 | Variable | Description | Example |
 |---|---|---|
-| `SF_DATABASE_URL` | Database connection string | `postgresql://sf:***@db:5432/sentinelforge` |
-| `SF_SECRET_KEY` | Signing key for tokens | *(generate a strong random value)* |
-| `SF_AGENT_ENROLL_TOKEN` | Token for agent enrolment | *(rotate regularly)* |
+| `SF_BUS_URL` | Event bus address | `nats://bus:4222` |
+| `SF_EVENT_STORE_URL` | Event storage backend | `clickhouse://ch:9000/sentinelforge` |
+| `SF_DATABASE_URL` | Metadata database | `postgresql://sf:***@db:5432/sentinelforge` |
 | `SF_ASSISTANT_ENABLED` | Toggle the AI assistant | `true` |
-| `SF_LLM_PROVIDER` / `SF_LLM_MODEL` | Model backend for the assistant | *(provider-specific)* |
-| `SF_INTEL_FEEDS` | Threat-intel sources | `local,csv:/data/iocs.csv` |
-| `SF_RESPONSE_MODE` | `observe` · `approval` | `approval` |
-| `SF_LOG_LEVEL` | Logging verbosity | `INFO` |
+| `SF_LLM_PROVIDER` / `SF_LLM_MODEL` | Model backend | *(provider-specific)* |
+| `SF_RESPONSE_MODE` | `observe` or `approval` | `approval` |
+| `SF_AGENT_CPU_LIMIT` | Agent CPU ceiling (%) | `2` |
 
-**Never commit real secrets.** Use `.env` files excluded via `.gitignore`.
+**Never commit secrets.** Use environment files excluded via `.gitignore`.
 
-## 📊 Evaluation Methodology
+## 📊 Evaluation & Benchmarking
 
-SentinelForge is evaluated in an **authorised, isolated laboratory** with controlled scenarios.
+SentinelForge is tested in an **isolated lab** with controlled, benign emulation scenarios (e.g., Atomic Red Team, Caldera).
 
-**Scenario families (benign simulation / emulation only)**
-- Suspicious process chains (e.g., office app spawning a script interpreter)
-- Authentication anomalies (brute-force patterns, unusual logon times)
-- Persistence creation (scheduled tasks/cron, services, startup entries)
-- Suspicious file and network behaviour
-- Multi-stage chains for correlation testing
-- Long benign runs to measure false positives
-
-**Metrics**
+**Scenario families:** suspicious process chains, authentication anomalies, persistence creation, suspicious file and network behaviour, multi-stage chains for correlation, and long benign runs for false-positive measurement.
 
 | Metric | Definition |
 |---|---|
-| **Precision** | TP / (TP + FP) |
-| **Recall** | TP / (TP + FN) |
-| **False-positive rate** | FP / (FP + TN) |
-| **Detection latency** | Time from event occurrence to alert |
-| **Resource overhead** | Agent CPU / RAM / disk / network usage |
+| **Precision / Recall** | TP/(TP+FP) and TP/(TP+FN) |
+| **False-positive rate** | FP/(FP+TN) |
+| **Detection latency** | Time from event to alert |
+| **Agent overhead** | CPU, RAM, disk and network cost per endpoint |
+| **Telemetry coverage** | Comparison against public EDR-telemetry baselines |
+| **ATT&CK coverage** | Techniques detected per scenario set |
 | **Investigation efficiency** | Time-to-summary with vs. without the assistant |
-| **Rule-workflow quality** | Candidate pass rate, review rejections, rollback frequency |
+| **Rule workflow quality** | Candidate pass rate, review rejections, rollbacks |
 
-Ablations compare **rules only**, **UEBA only**, and **hybrid** detection, plus correlation on/off.
+Ablations compare **rules only**, **UEBA only** and **hybrid** detection, with correlation on and off.
 
-Results, scripts, and reports live under [`evaluation/`](evaluation/).
+## 🔐 Security Model of the EDR Itself
 
-## 🔐 Security & Threat Model of the Framework Itself
-
-An EDR is a high-value target. SentinelForge treats its own security as a first-class requirement.
+An EDR is a high-value target, so its own security is a first-class requirement.
 
 | Risk | Mitigation |
 |---|---|
-| Rogue or spoofed agent | Enrolment tokens, per-agent credentials, mutual TLS (planned) |
-| Telemetry tampering | Signed batches, server-side validation and anomaly checks |
-| Malicious data targeting the AI | Telemetry treated as untrusted; no instruction-following from event content |
-| Over-privileged assistant | Read-only tools, scoped permissions, full logging |
-| Unsafe auto-generated rules | Schema validation, replay testing, mandatory human approval |
-| Abuse of response actions | RBAC, approval gates, justification, append-only audit |
+| Rogue or spoofed agent | Enrolment tokens, per-agent credentials, mTLS |
+| Agent tampering or kill | Self-protection, integrity checks, watchdog, tamper alerts *(planned)* |
+| Malicious or bad updates | Signed artefacts (TUF/cosign), staged rollout, automatic rollback |
+| Telemetry tampering | Signed batches, server-side validation |
+| Attacks on the AI layer | Telemetry as untrusted data, read-only tools, scoped permissions, logging |
+| Unsafe generated rules | Schema validation, replay testing, mandatory human approval |
+| Abuse of response actions | RBAC, OPA approval gates, justification, append-only audit |
+| Audit tampering | Hash-chained, append-only log |
 | Sensitive data exposure | Selective collection, minimisation, access control, retention limits |
-| Audit log tampering | Append-only, hash-chained entries |
 
 ## 🗺️ Roadmap
 
-- [x] Project definition, synopsis & approval
-- [ ] **Phase 1** — Literature review, requirements, technology study
-- [ ] **Phase 2** — Event schema; Windows & Linux agent prototypes
-- [ ] **Phase 3** — Ingestion API, storage, dashboard skeleton
-- [ ] **Phase 4** — Rule engine, UEBA baselines & anomaly scoring
-- [ ] **Phase 5** — Threat-intel enrichment, attack-chain correlation
-- [ ] **Phase 6** — Agentic assistant, adaptive rule workflow
-- [ ] **Phase 7** — Lab testing, evaluation, report, final demo
+- [x] Architecture and design
+- [ ] **M1** — Event schema (Protobuf), gateway skeleton, event bus
+- [ ] **M2** — Linux agent: eBPF process, file and network sensors
+- [ ] **M3** — Detection engine with Sigma support, event store, basic dashboard
+- [ ] **M4** — Windows agent: ETW telemetry
+- [ ] **M5** — UEBA baselines and explainable anomaly scoring
+- [ ] **M6** — Enrichment, ATT&CK mapping and attack-chain correlation
+- [ ] **M7** — AI assistant with read-only tools and citations
+- [ ] **M8** — Adaptive rule lifecycle, control plane, OPA response gates
+- [ ] **M9** — Hardening: mTLS everywhere, signed updates, self-protection, Windows driver
+- [ ] **M10** — Benchmarks, documentation, first public release
 
-**Future ideas:** macOS agent, Sigma rule import/export, MITRE ATT&CK coverage heatmap, federated/multi-tenant mode, richer response playbooks.
+**Future ideas:** macOS agent (Endpoint Security Framework), Sigma import/export tooling, ATT&CK coverage heatmap, multi-tenant mode, richer response playbooks, memory-scanning with YARA.
 
-## 🧪 Testing
+## 🤝 Contributing
 
-```bash
-pip install -r requirements-dev.txt
-pytest -q                      # unit + integration
-pytest tests/replay -q         # detection replay tests against labelled datasets
-python -m evaluation.run --scenario all --report out/report.html
-```
+Contributions, ideas and security reviews are welcome once the core is in place. Until then, feel free to open an issue to discuss architecture or propose components. Please do **not** submit offensive tooling or code intended for unauthorised use.
 
-
-**Project Supervisor:** Mr. Rahul Shandilya, Assistant Professor
-**Department:** Computer Engineering & Applications, GLA University, Mathura
+Suggested workflow: fork → feature branch → tests → pull request. A `CONTRIBUTING.md` and `SECURITY.md` (responsible disclosure) will be added.
 
 ## 📜 License & Disclaimer
 
-Released under the **MIT License** — see [`LICENSE`](LICENSE).
+Licensed under the **Apache License 2.0**. See [`LICENSE`](LICENSE).
 
-SentinelForge is an academic research prototype provided *as is*, without warranty. It is not a certified or production-ready security product. The authors are not responsible for misuse. Use only on systems you are authorised to monitor and test.
+SentinelForge is an early-stage, community-driven security project provided *as is*, without warranty, and is not a certified or production-ready product. The authors are not responsible for misuse. Use it only on systems you are authorised to monitor and test.
 
 ---
 
 <div align="center">
 
-**Built with 🛡️ for defenders · GLA University, Mathura**
+**Built for defenders 🛡️**
 
 </div>
