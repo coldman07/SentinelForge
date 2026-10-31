@@ -532,17 +532,6 @@ pytest tests/replay -q         # detection replay tests against labelled dataset
 python -m evaluation.run --scenario all --report out/report.html
 ```
 
-## 👥 Team
-
-**Group G-2 — B.Tech (CSE-CSF), GLA University, Mathura (Session 2026-27)**
-
-| Name | University Roll No. |
-|---|---|
-| Garima Mittal | 2315300006 |
-| Nitin Sikarwar | 2315300014 |
-| Pragati Varshney | 2315300016 |
-| Saksham Wadhwa | 2315300025 |
-| Vibhu Yadav | 2315300033 |
 
 **Project Supervisor:** Mr. Rahul Shandilya, Assistant Professor
 **Department:** Computer Engineering & Applications, GLA University, Mathura
