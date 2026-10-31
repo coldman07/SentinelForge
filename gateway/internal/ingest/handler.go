@@ -1,11 +1,16 @@
 package ingest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
+
+	"github.com/coldman07/SentinelForge/gateway/internal/dashboard"
 )
 
 const maxEventBytes = 1 << 20
@@ -14,6 +19,12 @@ const maxEventBytes = 1 << 20
 // only after it has accepted responsibility for the event.
 type Publisher interface {
 	Publish(event Event) error
+}
+
+// AlertReader provides the read-only data used by the local dashboard.
+type AlertReader interface {
+	ListAlerts(ctx context.Context, limit int) ([]json.RawMessage, error)
+	GetAlert(ctx context.Context, eventID string) (json.RawMessage, error)
 }
 
 // Event is the JSON representation of sentinelforge.events.v1.Event. The
@@ -55,19 +66,91 @@ type RawSource struct {
 }
 
 type Handler struct {
-	publisher Publisher
+	publisher   Publisher
+	alertReader AlertReader
 }
 
 func NewHandler(publisher Publisher) http.Handler {
-	h := &Handler{publisher: publisher}
+	return NewHandlerWithAlerts(publisher, nil)
+}
+
+func NewHandlerWithAlerts(publisher Publisher, alertReader AlertReader) http.Handler {
+	h := &Handler{publisher: publisher, alertReader: alertReader}
 	mux := http.NewServeMux()
+	mux.Handle("GET /", dashboard.Handler())
 	mux.HandleFunc("GET /healthz", h.health)
+	mux.HandleFunc("GET /v1/alerts", h.alerts)
+	mux.HandleFunc("GET /v1/alerts/{eventID}", h.alert)
 	mux.HandleFunc("POST /v1/events", h.ingest)
 	return mux
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) alerts(w http.ResponseWriter, r *http.Request) {
+	if !isLoopbackRequest(r) {
+		http.Error(w, "alert data is available from this machine only", http.StatusForbidden)
+		return
+	}
+	if h.alertReader == nil {
+		http.Error(w, "alert store is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	limit := 100
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 {
+			http.Error(w, "limit must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		if parsed < limit {
+			limit = parsed
+		}
+	}
+	alerts, err := h.alertReader.ListAlerts(r.Context(), limit)
+	if err != nil {
+		http.Error(w, "could not load alert records", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(alerts); err != nil {
+		return
+	}
+}
+
+func (h *Handler) alert(w http.ResponseWriter, r *http.Request) {
+	if !isLoopbackRequest(r) {
+		http.Error(w, "alert data is available from this machine only", http.StatusForbidden)
+		return
+	}
+	if h.alertReader == nil {
+		http.Error(w, "alert store is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	alert, err := h.alertReader.GetAlert(r.Context(), r.PathValue("eventID"))
+	if err != nil {
+		http.Error(w, "could not load alert evidence", http.StatusServiceUnavailable)
+		return
+	}
+	if len(alert) == 0 {
+		http.NotFound(w, r)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	_, _ = w.Write(alert)
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = strings.Trim(r.RemoteAddr, "[]")
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {

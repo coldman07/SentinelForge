@@ -32,9 +32,28 @@ func main() {
 		log.Fatal(err)
 	}
 	defer connection.Drain()
-	log.Printf("event store consuming JetStream events and writing to %s", clickHouseURL)
-	if err := publisher.Consume(ctx, "EVENT_STORE", store.InsertEvent); err != nil {
-		log.Fatal(err)
+	log.Printf("event store consuming JetStream events and alerts and writing to %s", clickHouseURL)
+	consumerErrors := make(chan error, 2)
+	go func() {
+		consumerErrors <- publisher.Consume(ctx, "EVENT_STORE", store.InsertEvent)
+	}()
+	go func() {
+		consumerErrors <- publisher.ConsumeSubject(
+			ctx,
+			"sentinelforge.alerts.v1.>",
+			"ALERT_STORE",
+			store.InsertAlert,
+		)
+	}()
+
+	select {
+	case <-ctx.Done():
+		log.Print("event store shutting down")
+	case err := <-consumerErrors:
+		stop()
+		if err != nil {
+			log.Fatalf("event-store consumer stopped: %v", err)
+		}
 	}
 }
 
