@@ -1,11 +1,17 @@
 package ingest
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
+	"net"
 	"net/http"
+	"strconv"
 	"strings"
+
+	"github.com/coldman07/SentinelForge/gateway/internal/dashboard"
+	"github.com/coldman07/SentinelForge/gateway/internal/store"
 )
 
 const maxEventBytes = 1 << 20
@@ -14,6 +20,11 @@ const maxEventBytes = 1 << 20
 // only after it has accepted responsibility for the event.
 type Publisher interface {
 	Publish(event Event) error
+}
+
+// EventReader provides recent stored events to the local dashboard.
+type EventReader interface {
+	ListRecentEvents(ctx context.Context, limit int) ([]store.EventSummary, error)
 }
 
 // Event is the JSON representation of sentinelforge.events.v1.Event. The
@@ -55,19 +66,67 @@ type RawSource struct {
 }
 
 type Handler struct {
-	publisher Publisher
+	publisher   Publisher
+	eventReader EventReader
 }
 
 func NewHandler(publisher Publisher) http.Handler {
-	h := &Handler{publisher: publisher}
+	return NewHandlerWithEvents(publisher, nil)
+}
+
+func NewHandlerWithEvents(publisher Publisher, eventReader EventReader) http.Handler {
+	h := &Handler{publisher: publisher, eventReader: eventReader}
 	mux := http.NewServeMux()
+	mux.Handle("GET /{$}", dashboard.Handler())
 	mux.HandleFunc("GET /healthz", h.health)
+	mux.HandleFunc("GET /v1/events", h.events)
 	mux.HandleFunc("POST /v1/events", h.ingest)
 	return mux
 }
 
 func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
+	if !isLoopbackRequest(r) {
+		http.Error(w, "event data is available from this machine only", http.StatusForbidden)
+		return
+	}
+	if h.eventReader == nil {
+		http.Error(w, "event store is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	limit := 100
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 {
+			http.Error(w, "limit must be a positive integer", http.StatusBadRequest)
+			return
+		}
+		if parsed < limit {
+			limit = parsed
+		}
+	}
+	events, err := h.eventReader.ListRecentEvents(r.Context(), limit)
+	if err != nil {
+		http.Error(w, "could not load event records", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(events); err != nil {
+		return
+	}
+}
+
+func isLoopbackRequest(r *http.Request) bool {
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		host = strings.Trim(r.RemoteAddr, "[]")
+	}
+	address := net.ParseIP(host)
+	return address != nil && address.IsLoopback()
 }
 
 func (h *Handler) ingest(w http.ResponseWriter, r *http.Request) {

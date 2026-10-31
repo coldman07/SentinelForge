@@ -18,7 +18,7 @@
 
 ---
 
-> 🚧 **Project status: early development.** The first implementation slices are in place: the Protobuf event contract, Go ingestion gateway, NATS JetStream bus, ClickHouse event store, Linux eBPF process/file/network sensors, and a standalone Rust Sigma evaluator. The evaluator and event store are not yet connected into a complete alerting pipeline. Windows support, the dashboard, and the remaining platform services are still planned.
+> 🚧 **Project status: early development.** The first implementation slices are in place: the Protobuf event contract, Go ingestion gateway, NATS JetStream bus, ClickHouse event store, Linux eBPF process/file/network sensors, a Windows ETW process-start sensor, a standalone Rust Sigma evaluator, and a basic local telemetry dashboard. Sigma evaluation is not connected to event ingestion, so the dashboard currently shows events rather than alerts. Windows authentication/file/network telemetry and the remaining platform services are still planned.
 
 > ⚠️ **Authorised use only.** Deploy agents only on systems you own or have explicit written permission to monitor, and run all attack simulations in an isolated lab.
 
@@ -169,11 +169,11 @@ flowchart LR
 ### 1. Endpoint agent (Rust)
 A small, privileged, self-protecting sensor.
 
-**Implemented Linux slice:** the Rust loader and eBPF programs emit process, file and network events in the shared JSON shape. Authentication, service and persistence sensors, the local queue/governor, and the Windows agent remain planned.
+**Implemented slices:** the Linux Rust loader and eBPF programs emit process, file and network events in the shared JSON shape. The initial Windows Rust sensor reads process-start events from `Microsoft-Windows-Kernel-Process` ETW and emits the same event shape. Windows collection currently covers process starts only and requires an elevated session. Authentication, file and network sensors, service and persistence events, and the local queue/governor remain planned.
 
 | Category | Windows | Linux |
 |---|---|---|
-| **Process** | ETW kernel/process providers, process-creation callbacks (driver) | eBPF (`execve`, `exit`, fork lineage) |
+| **Process** | ETW `Microsoft-Windows-Kernel-Process` (process start) | eBPF (`execve`, `exit`, fork lineage) |
 | **Authentication** | Security log (4624/4625/4648/4672) via ETW/EvtSubscribe | journald (sshd, sudo, PAM), auth logs |
 | **File** | ETW file providers, minifilter (optional) | eBPF / fanotify on selected paths |
 | **Service** | Service install/start events (7045, SCM) | systemd unit events |
@@ -183,7 +183,7 @@ A small, privileged, self-protecting sensor.
 Agent responsibilities: collect → filter → enrich locally (hashes, lineage) → queue on disk → ship over mTLS. A **resource governor** caps CPU/RAM/IO, and a **local queue** survives network loss.
 
 ### 2. Ingestion gateway (Go)
-The gateway validates one JSON event against the current schema and publishes accepted events to the durable NATS JetStream stream. Agent authentication, Protobuf/gRPC transport, normalisation, rate limiting and back-pressure remain planned.
+The gateway validates one JSON event against the current schema and publishes accepted events to the durable NATS JetStream stream. It serves a local read-only telemetry dashboard and loopback-only `GET /v1/events` API. Agent authentication, Protobuf/gRPC transport, normalisation, rate limiting and back-pressure remain planned.
 
 ### 3. Event bus
 NATS JetStream decouples ingestion from consumers. The current ClickHouse consumer reads the durable event stream and acknowledges each event after the insert succeeds. Detection and UEBA consumers are not connected yet. Kafka/Redpanda remains an alternative for a later deployment profile.
@@ -209,7 +209,7 @@ Links alerts and events by entity, process tree, time window and ATT&CK techniqu
 Handles enrolment, configuration, signed agent/rule updates, response orchestration and RBAC. **Open Policy Agent (OPA)** evaluates approval policies as code.
 
 ### 10. Analyst dashboard (React + TypeScript)
-Alert triage, incident timelines, host and user views, hunting, rule management, approval queues and the assistant chat.
+The current embedded development dashboard summarizes recent event volume and categories, lists searchable/filterable activity, and lets a local analyst inspect raw event evidence. It reads from a loopback-only API and is not an alert dashboard yet: Sigma evaluation is not connected to the event stream on this branch. The React application, alert triage, incident timelines, host and user views, hunting, rule management, approval queues and assistant chat remain planned.
 
 ## 📐 Event Schema
 
@@ -365,7 +365,7 @@ SentinelForge/
 ├── ml/                     # Python: UEBA features, models, explainability
 ├── assistant/              # Python: agent, read-only tools, guardrails
 ├── rulelifecycle/          # generate, validate, replay, approve, version, roll back
-├── dashboard/              # React + TypeScript UI
+├── dashboard/              # planned React analyst UI; local event view is embedded in gateway
 ├── rules/                  # Sigma and native rule packs
 ├── policy/                 # OPA/Rego policies
 ├── datasets/               # labelled attack scenarios and benign baselines
@@ -377,7 +377,7 @@ SentinelForge/
 
 ## 🚀 Getting Started
 
-> The full platform is not runnable yet. To run the current local ingestion and storage slice, start NATS and ClickHouse, then run the gateway and event-store consumer in separate terminals. The detection evaluator is a library and is not yet wired into this stream.
+> The full platform is not runnable yet. To run the current local ingestion, event storage and telemetry dashboard, start NATS and ClickHouse, then run the gateway and event-store consumer in separate terminals. The detection evaluator is not yet wired into this stream.
 
 ```bash
 git clone https://github.com/coldman07/SentinelForge.git
@@ -390,6 +390,8 @@ docker compose -f deploy/docker-compose.yml up -d nats clickhouse
 cd gateway
 go run .
 ```
+
+Open `http://127.0.0.1:8080/` on the gateway machine. The event API that feeds the dashboard only accepts loopback connections.
 
 **Terminal 2, from the repository root:** start the ClickHouse consumer.
 
@@ -461,8 +463,12 @@ An EDR is a high-value target, so its own security is a first-class requirement.
 - [ ] **M3** — Detection engine with Sigma support, event store, basic dashboard
   - [x] ClickHouse event-store consumer
   - [x] Standalone Rust Sigma parsing and evaluation library
-  - [ ] Connect detection evaluation to the event stream; persist alerts; build dashboard
+  - [x] Read-only local telemetry dashboard with recent event evidence
+  - [ ] Connect detection evaluation to the event stream and persist alerts
+  - [ ] Build the React alert dashboard and investigation workflows
 - [ ] **M4** — Windows agent: ETW telemetry
+  - [x] Initial process-start telemetry from `Microsoft-Windows-Kernel-Process`
+  - [ ] Authentication, file and network telemetry plus endpoint service integration
 - [ ] **M5** — UEBA baselines and explainable anomaly scoring
 - [ ] **M6** — Enrichment, ATT&CK mapping and attack-chain correlation
 - [ ] **M7** — AI assistant with read-only tools and citations

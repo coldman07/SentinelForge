@@ -44,6 +44,7 @@ pub struct RawSource {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProcessReference {
     pub pid: u64,
+    #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
 }
 
@@ -135,17 +136,24 @@ pub struct NetworkConnect {
 }
 
 impl ProcessStart {
-    /// Build the shared process-start envelope from a successful eBPF exec
-    /// observation. Callers supply host identity, wall-clock time, and UUID.
-    pub fn from_exec_observation(
+    /// Build a shared process-start envelope from a platform sensor observation.
+    #[allow(clippy::too_many_arguments)]
+    pub fn from_observation(
         event_id: String,
         timestamp: String,
         host: Host,
         pid: u32,
         user: Option<User>,
         filename: &str,
+        command_line: &str,
+        parent: Option<ProcessReference>,
+        source: &str,
+        provider: &str,
     ) -> Self {
-        let name = filename.rsplit('/').next().unwrap_or(filename);
+        let name = filename
+            .rsplit(|ch| ch == '/' || ch == '\\')
+            .next()
+            .unwrap_or(filename);
         Self {
             event_id,
             timestamp,
@@ -157,17 +165,39 @@ impl ProcessStart {
                 pid: u64::from(pid),
                 name: name.into(),
                 path: filename.into(),
-                // The eBPF slice captures the executable path, not argv yet.
-                command_line: filename.into(),
+                command_line: command_line.into(),
                 hash: None,
-                parent: None,
+                parent,
             },
             raw: RawSource {
-                source: "eBPF".into(),
-                provider: "sys_enter/exit_execve".into(),
+                source: source.into(),
+                provider: provider.into(),
             },
             schema_version: SCHEMA_VERSION.into(),
         }
+    }
+
+    /// Build a process-start envelope from a successful Linux exec observation.
+    pub fn from_exec_observation(
+        event_id: String,
+        timestamp: String,
+        host: Host,
+        pid: u32,
+        user: Option<User>,
+        filename: &str,
+    ) -> Self {
+        Self::from_observation(
+            event_id,
+            timestamp,
+            host,
+            pid,
+            user,
+            filename,
+            filename,
+            None,
+            "eBPF",
+            "sys_enter/exit_execve",
+        )
     }
 
     pub fn to_json(&self) -> Result<String, serde_json::Error> {

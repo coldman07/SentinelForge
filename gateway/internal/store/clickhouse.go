@@ -44,6 +44,16 @@ type eventRow struct {
 	EventJSON string `json:"event_json"`
 }
 
+// EventSummary is the searchable event envelope shown by the local dashboard.
+type EventSummary struct {
+	EventID   string          `json:"event_id"`
+	Timestamp string          `json:"timestamp"`
+	HostID    string          `json:"host_id"`
+	Category  string          `json:"category"`
+	Action    string          `json:"action"`
+	Event     json.RawMessage `json:"event"`
+}
+
 func NewClickHouseStore(endpoint, username, password string) (*ClickHouseStore, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -91,11 +101,70 @@ func (s *ClickHouseStore) InsertEvent(ctx context.Context, event []byte) error {
 	return s.request(ctx, "INSERT INTO sentinelforge.events FORMAT JSONEachRow", bytes.NewReader(body))
 }
 
+// ListRecentEvents returns the newest event records for the local dashboard.
+func (s *ClickHouseStore) ListRecentEvents(ctx context.Context, limit int) ([]EventSummary, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	query := fmt.Sprintf(`SELECT
+	 event_id,
+	 formatDateTime(timestamp, '%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ', 'UTC') AS timestamp,
+	 host_id,
+	 category,
+	 action,
+	 event_json
+FROM sentinelforge.events
+ORDER BY timestamp DESC
+LIMIT %d
+FORMAT JSONEachRow`, limit)
+	body, err := s.requestBody(ctx, query, strings.NewReader(""))
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	events := make([]EventSummary, 0, limit)
+	for {
+		var row struct {
+			EventID   string `json:"event_id"`
+			Timestamp string `json:"timestamp"`
+			HostID    string `json:"host_id"`
+			Category  string `json:"category"`
+			Action    string `json:"action"`
+			EventJSON string `json:"event_json"`
+		}
+		if err := decoder.Decode(&row); err != nil {
+			if err == io.EOF {
+				return events, nil
+			}
+			return nil, fmt.Errorf("decode ClickHouse event summary: %w", err)
+		}
+		if !json.Valid([]byte(row.EventJSON)) {
+			return nil, fmt.Errorf("stored event %q contains invalid JSON", row.EventID)
+		}
+		events = append(events, EventSummary{
+			EventID:   row.EventID,
+			Timestamp: row.Timestamp,
+			HostID:    row.HostID,
+			Category:  row.Category,
+			Action:    row.Action,
+			Event:     json.RawMessage(row.EventJSON),
+		})
+	}
+}
+
 func (s *ClickHouseStore) query(ctx context.Context, query string) error {
 	return s.request(ctx, query, strings.NewReader(""))
 }
 
 func (s *ClickHouseStore) request(ctx context.Context, query string, body io.Reader) error {
+	_, err := s.requestBody(ctx, query, body)
+	return err
+}
+
+func (s *ClickHouseStore) requestBody(ctx context.Context, query string, body io.Reader) ([]byte, error) {
 	endpoint := *s.endpoint
 	parameters := endpoint.Query()
 	parameters.Set("query", query)
@@ -103,7 +172,7 @@ func (s *ClickHouseStore) request(ctx context.Context, query string, body io.Rea
 
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint.String(), body)
 	if err != nil {
-		return fmt.Errorf("build ClickHouse request: %w", err)
+		return nil, fmt.Errorf("build ClickHouse request: %w", err)
 	}
 	request.Header.Set("Content-Type", "application/json")
 	if s.username != "" {
@@ -112,12 +181,16 @@ func (s *ClickHouseStore) request(ctx context.Context, query string, body io.Rea
 
 	response, err := s.client.Do(request)
 	if err != nil {
-		return fmt.Errorf("send ClickHouse request: %w", err)
+		return nil, fmt.Errorf("send ClickHouse request: %w", err)
 	}
 	defer response.Body.Close()
 	if response.StatusCode < http.StatusOK || response.StatusCode >= http.StatusMultipleChoices {
 		message, _ := io.ReadAll(io.LimitReader(response.Body, 4096))
-		return fmt.Errorf("ClickHouse returned %s: %s", response.Status, strings.TrimSpace(string(message)))
+		return nil, fmt.Errorf("ClickHouse returned %s: %s", response.Status, strings.TrimSpace(string(message)))
 	}
-	return nil
+	result, err := io.ReadAll(io.LimitReader(response.Body, 16<<20))
+	if err != nil {
+		return nil, fmt.Errorf("read ClickHouse response: %w", err)
+	}
+	return result, nil
 }
