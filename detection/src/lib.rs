@@ -7,6 +7,7 @@
 //! weakening a rule.
 
 use regex::Regex;
+use serde::Serialize;
 use serde_yaml::{Mapping, Value as YamlValue};
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -55,7 +56,7 @@ struct LogSource {
 }
 
 /// Metadata for a rule that matched an event.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct DetectionMatch {
     pub rule_id: Option<String>,
     pub title: String,

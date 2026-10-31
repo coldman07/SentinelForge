@@ -6,6 +6,7 @@ This is the first Go gateway slice for M1. It exposes:
 - `POST /v1/events` for validating one JSON event shaped like the documented event example.
 - `GET /` for the local read-only telemetry dashboard.
 - `GET /v1/events` for recent stored events (loopback only; limit capped at 100).
+- `GET /v1/alerts` for recent Sigma detections and evidence (loopback only; limit capped at 100).
 
 Start the local event bus and event store from the repository root:
 
@@ -36,11 +37,13 @@ Run the event-store consumer in a second terminal:
 go run ./cmd/event-store
 ```
 
-It creates the `sentinelforge.events` ClickHouse table and consumes events from
-JetStream. The durable `EVENT_STORE` consumer acknowledges each message only
-after ClickHouse accepts the insert; failed inserts are retried after five
-seconds. Configure `SF_NATS_URL`, `SF_CLICKHOUSE_URL`, `SF_CLICKHOUSE_USER`, and
-`SF_CLICKHOUSE_PASSWORD` to use non-default endpoints or credentials.
+It creates the `sentinelforge.events` and `sentinelforge.alerts` ClickHouse
+tables and consumes both durable JetStream streams. The `EVENT_STORE` and
+`ALERT_STORE` consumers acknowledge messages only after ClickHouse accepts
+each insert; failed inserts are retried after five seconds. Alert rows keep
+searchable rule IDs, titles and levels plus the complete alert and event
+evidence. Configure `SF_NATS_URL`, `SF_CLICKHOUSE_URL`, `SF_CLICKHOUSE_USER`,
+and `SF_CLICKHOUSE_PASSWORD` to use non-default endpoints or credentials.
 
 This JSON route is a development scaffold. The versioned Protobuf contract in
 `../proto/events/v1/event.proto` remains authoritative for the planned gRPC

@@ -65,6 +65,7 @@
     .metric.hosts .metric-value { color: #8be0c5; }
     .metric.process .metric-value { color: #d5bdff; }
     .metric.network .metric-value { color: #ffc986; }
+    .metric.alert .metric-value { color: #ff9da7; }
     .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 28px 0 12px; }
     .section-heading h2 { margin: 0; color: #d8e2f0; font-size: 13px; font-weight: 675; }
     .section-heading span { color: #78869b; font-size: 10px; }
@@ -89,6 +90,8 @@
     .timestamp { color: #96a5bb; font-variant-numeric: tabular-nums; }
     .host { color: #d6e4f8; font-weight: 630; }
     .action { color: #d8e1ee; font-weight: 570; }
+    .rule-id { display: block; margin-top: 4px; color: #7889a2; font: 9px ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    .count { color: #9db1cf; font-variant-numeric: tabular-nums; }
     .event-target { max-width: 330px; overflow: hidden; color: #9cb2ce; text-overflow: ellipsis; }
     .pill { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border: 1px solid #ffffff0a; border-radius: 999px; font-size: 9px; font-weight: 700; text-transform: capitalize; }
     .pill::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ""; }
@@ -98,6 +101,13 @@
     .pill.authentication { color: #ff9da7; background: #54252d66; }
     .pill.service, .pill.persistence { color: #8fc1ff; background: #1c385666; }
     .pill.unknown { color: #aab6c8; background: #2a354566; }
+    .severity { display: inline-flex; align-items: center; gap: 6px; padding: 4px 7px; border: 1px solid #ffffff0a; border-radius: 999px; font-size: 9px; font-weight: 720; text-transform: capitalize; }
+    .severity::before { width: 5px; height: 5px; border-radius: 50%; background: currentColor; content: ""; }
+    .severity.critical { color: #ff8190; background: #67243355; }
+    .severity.high { color: #ffae76; background: #71381e55; }
+    .severity.medium { color: #f2cc70; background: #68551e55; }
+    .severity.low { color: #81c9ff; background: #1c507355; }
+    .severity.informational, .severity.unknown { color: #a7b4c9; background: #29364a88; }
     .expand { width: 26px; height: 25px; border: 1px solid #2c3a4e; border-radius: 6px; cursor: pointer; color: #9bacbf; background: #111b29; }
     .evidence-row td { padding: 0; background: #090f19; }
     .evidence { margin: 0; padding: 15px 18px; overflow: auto; color: #9fb1c8; font: 10px/1.6 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
@@ -120,7 +130,7 @@
       <div class="nav-label">Workspace</div>
       <div class="nav-item active"><span class="nav-glyph">◫</span>Overview</div>
       <div class="nav-item"><span class="nav-glyph">⌁</span>Event stream</div>
-      <div class="nav-item" title="Detection evaluation is not connected to the event stream yet"><span class="nav-glyph">◇</span>Detections <span style="margin-left:auto;color:#65758d;font-size:9px">NEXT</span></div>
+      <div class="nav-item" id="detections-nav" role="button" tabindex="0"><span class="nav-glyph">◇</span>Detections</div>
       <div class="nav-item" title="Host inventory is planned"><span class="nav-glyph">▣</span>Endpoints <span style="margin-left:auto;color:#65758d;font-size:9px">SOON</span></div>
       <div class="nav-label" style="margin-top:28px">System</div>
       <div class="nav-item"><span class="nav-glyph">⚙</span>Data sources</div>
@@ -142,7 +152,7 @@
         <article class="metric events"><div class="metric-label">Events in window</div><div class="metric-row"><div class="metric-value" id="total">—</div><span class="metric-note">from latest 100</span></div></article>
         <article class="metric hosts"><div class="metric-label">Active hosts</div><div class="metric-row"><div class="metric-value" id="hosts">—</div><span class="metric-note">distinct endpoints</span></div></article>
         <article class="metric process"><div class="metric-label">Process activity</div><div class="metric-row"><div class="metric-value" id="processes">—</div><span class="metric-note">process events</span></div></article>
-        <article class="metric network"><div class="metric-label">Network activity</div><div class="metric-row"><div class="metric-value" id="networks">—</div><span class="metric-note">network events</span></div></article>
+        <article class="metric alert"><div class="metric-label">Sigma detections</div><div class="metric-row"><div class="metric-value" id="alert-total">—</div><span class="metric-note">in selected window</span></div></article>
       </section>
 
       <div class="section-heading"><h2>Event distribution</h2><span id="distribution-note">Across visible events</span></div>
@@ -163,13 +173,32 @@
         </div>
         <div class="panel-footer"><span id="result-count">Loading events…</span><span id="last-updated">Waiting for data</span></div>
       </section>
+
+      <div class="section-heading table-heading" id="detections-section"><div><h2>Recent detections</h2><span>Rule matches from the durable JetStream alert stream, persisted in ClickHouse</span></div>
+        <div class="toolbar">
+          <input class="search" id="alert-search" type="search" placeholder="Search host or rule…" aria-label="Search detections">
+          <select class="window-select category-select" id="severity-filter" aria-label="Filter detection severity"><option value="">All severities</option><option>critical</option><option>high</option><option>medium</option><option>low</option><option>informational</option></select>
+        </div>
+      </div>
+      <section class="table-panel">
+        <div class="table-overflow">
+          <table>
+            <thead><tr><th>Observed</th><th>Severity</th><th>Detection rule</th><th>Host</th><th>Matches</th><th></th></tr></thead>
+            <tbody id="alerts"><tr><td colspan="6" class="empty">Loading detections…</td></tr></tbody>
+          </table>
+        </div>
+        <div class="panel-footer"><span id="alert-result-count">Loading detections…</span><span>Evidence includes the matched event and rule metadata</span></div>
+      </section>
     </main>
   </div>
 </div>
 <script>
   const records = [];
   let allEvents = [];
+  let allAlerts = [];
+  let alertLoadError = '';
   const categories = ['process', 'file', 'network', 'authentication', 'service', 'persistence'];
+  const severityOrder = ['critical', 'high', 'medium', 'low', 'informational'];
   const $ = id => document.getElementById(id);
   const asString = value => typeof value === 'string' ? value : '';
   const detailFor = record => {
@@ -184,6 +213,22 @@
     return 'Event activity';
   };
   const timestampOf = record => new Date(record.timestamp).getTime();
+  function severityOf(alert) {
+    const levels = (alert.levels || []).map(level => String(level).toLowerCase());
+    return severityOrder.find(level => levels.includes(level)) || levels[0] || 'unknown';
+  }
+  function filteredAlerts() {
+    const duration = Number($('window').value);
+    const cutoff = duration ? Date.now() - duration : 0;
+    const severity = $('severity-filter').value;
+    const query = $('alert-search').value.trim().toLowerCase();
+    return allAlerts.filter(alert => {
+      if (cutoff && timestampOf(alert) < cutoff) return false;
+      if (severity && severityOf(alert) !== severity) return false;
+      const haystack = [alert.host_id, ...(alert.rule_titles || []), ...(alert.rule_ids || [])].join(' ').toLowerCase();
+      return !query || haystack.includes(query);
+    });
+  }
   function filteredEvents() {
     const duration = Number($('window').value);
     const cutoff = duration ? Date.now() - duration : 0;
@@ -232,10 +277,11 @@
   }
   function draw() {
     const visible = filteredEvents();
+    const visibleAlerts = filteredAlerts();
     $('total').textContent = visible.length;
     $('hosts').textContent = new Set(visible.map(event => event.host_id)).size;
     $('processes').textContent = visible.filter(event => event.category === 'process').length;
-    $('networks').textContent = visible.filter(event => event.category === 'network').length;
+    $('alert-total').textContent = visibleAlerts.length;
     drawDistribution(visible);
     const body = $('events');
     body.replaceChildren();
@@ -285,14 +331,82 @@
       });
     }
     $('result-count').textContent = `Showing ${visible.length} of ${allEvents.length} loaded events · click a row control to inspect evidence`;
+    const alertBody = $('alerts');
+    alertBody.replaceChildren();
+    if (!visibleAlerts.length) {
+      const row = document.createElement('tr');
+      const message = alertLoadError || (allAlerts.length ? 'No detections match these filters.' : 'No detections yet. Matching Sigma rules will appear here.');
+      const td = cell(row, alertLoadError ? 'empty error' : 'empty', message);
+      td.colSpan = 6;
+      alertBody.appendChild(row);
+    }
+    for (const alert of visibleAlerts) {
+      const row = document.createElement('tr');
+      row.className = 'event-row';
+      const timestamp = new Date(alert.timestamp);
+      cell(row, 'timestamp', Number.isNaN(timestamp.getTime()) ? alert.timestamp : timestamp.toLocaleString());
+      const severityCell = document.createElement('td');
+      const badge = document.createElement('span');
+      const severity = severityOf(alert);
+      badge.className = `severity ${severity}`;
+      badge.textContent = severity;
+      severityCell.appendChild(badge);
+      row.appendChild(severityCell);
+      const title = (alert.rule_titles || []).filter(Boolean).join(', ');
+      const ruleIDs = (alert.rule_ids || []).filter(Boolean).join(', ');
+      const ruleCell = cell(row, 'action', title || ruleIDs || 'Sigma rule matched');
+      if (ruleIDs) {
+        const idLine = document.createElement('span');
+        idLine.className = 'rule-id';
+        idLine.textContent = ruleIDs;
+        ruleCell.appendChild(idLine);
+      }
+      cell(row, 'host', alert.host_id || '—');
+      cell(row, 'count', String(alert.match_count));
+      const control = document.createElement('td');
+      const button = document.createElement('button');
+      button.className = 'expand';
+      button.type = 'button';
+      button.setAttribute('aria-label', `Show evidence for detection ${alert.event_id}`);
+      button.textContent = '⌄';
+      control.appendChild(button);
+      row.appendChild(control);
+      alertBody.appendChild(row);
+      const evidenceRow = document.createElement('tr');
+      evidenceRow.className = 'evidence-row';
+      evidenceRow.hidden = true;
+      const evidenceCell = document.createElement('td');
+      evidenceCell.colSpan = 6;
+      const pre = document.createElement('pre');
+      pre.className = 'evidence';
+      pre.textContent = JSON.stringify(alert.alert || {}, null, 2);
+      evidenceCell.appendChild(pre);
+      evidenceRow.appendChild(evidenceCell);
+      alertBody.appendChild(evidenceRow);
+      button.addEventListener('click', () => {
+        evidenceRow.hidden = !evidenceRow.hidden;
+        button.textContent = evidenceRow.hidden ? '⌄' : '⌃';
+      });
+    }
+    $('alert-result-count').textContent = `Showing ${visibleAlerts.length} of ${allAlerts.length} loaded detections`;
   }
   async function refresh() {
     const button = $('refresh');
     button.disabled = true;
     try {
-      const response = await fetch('/v1/events?limit=100', { cache: 'no-store' });
-      if (!response.ok) throw new Error(response.status === 403 ? 'Event data is available from this machine only.' : `Event store returned ${response.status}.`);
-      allEvents = await response.json();
+      const [eventResponse, alertResponse] = await Promise.all([
+        fetch('/v1/events?limit=100', { cache: 'no-store' }),
+        fetch('/v1/alerts?limit=100', { cache: 'no-store' })
+      ]);
+      if (!eventResponse.ok) throw new Error(eventResponse.status === 403 ? 'Event data is available from this machine only.' : `Event store returned ${eventResponse.status}.`);
+      allEvents = await eventResponse.json();
+      if (alertResponse.ok) {
+        allAlerts = await alertResponse.json();
+        alertLoadError = '';
+      } else {
+        allAlerts = [];
+        alertLoadError = alertResponse.status === 403 ? 'Detection data is available from this machine only.' : 'Alert store is unavailable.';
+      }
       draw();
       $('last-updated').textContent = `Updated ${new Date().toLocaleTimeString()}`;
     } catch (error) {
@@ -311,6 +425,12 @@
   $('window').addEventListener('change', draw);
   $('search').addEventListener('input', draw);
   $('category-filter').addEventListener('change', draw);
+  $('severity-filter').addEventListener('change', draw);
+  $('alert-search').addEventListener('input', draw);
+  $('detections-nav').addEventListener('click', () => $('detections-section').scrollIntoView({ behavior: 'smooth' }));
+  $('detections-nav').addEventListener('keydown', event => {
+    if (event.key === 'Enter' || event.key === ' ') $('detections-section').scrollIntoView({ behavior: 'smooth' });
+  });
   const updateClock = () => $('clock').textContent = new Date().toLocaleTimeString();
   updateClock();
   window.setInterval(updateClock, 1000);

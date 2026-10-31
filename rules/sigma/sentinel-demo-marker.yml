@@ -1,0 +1,14 @@
+title: SentinelForge Demo Marker Process
+id: 4dc4ca75-54e7-4bed-9f3f-72a4e85fae3a
+status: test
+description: Emits a test detection for a local process command line containing the SentinelForge demo marker.
+logsource:
+  product: linux
+  category: process_creation
+detection:
+  selection:
+    CommandLine|contains: sentinelforge-demo-marker
+  condition: selection
+level: informational
+tags:
+  - sentinelforge.test

@@ -27,6 +27,11 @@ type EventReader interface {
 	ListRecentEvents(ctx context.Context, limit int) ([]store.EventSummary, error)
 }
 
+// AlertReader provides recent stored detections to the local dashboard.
+type AlertReader interface {
+	ListRecentAlerts(ctx context.Context, limit int) ([]store.AlertSummary, error)
+}
+
 // Event is the JSON representation of sentinelforge.events.v1.Event. The
 // protobuf contract remains authoritative for the eventual gRPC transport.
 type Event struct {
@@ -68,18 +73,24 @@ type RawSource struct {
 type Handler struct {
 	publisher   Publisher
 	eventReader EventReader
+	alertReader AlertReader
 }
 
 func NewHandler(publisher Publisher) http.Handler {
-	return NewHandlerWithEvents(publisher, nil)
+	return NewHandlerWithData(publisher, nil, nil)
 }
 
 func NewHandlerWithEvents(publisher Publisher, eventReader EventReader) http.Handler {
-	h := &Handler{publisher: publisher, eventReader: eventReader}
+	return NewHandlerWithData(publisher, eventReader, nil)
+}
+
+func NewHandlerWithData(publisher Publisher, eventReader EventReader, alertReader AlertReader) http.Handler {
+	h := &Handler{publisher: publisher, eventReader: eventReader, alertReader: alertReader}
 	mux := http.NewServeMux()
 	mux.Handle("GET /{$}", dashboard.Handler())
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /v1/events", h.events)
+	mux.HandleFunc("GET /v1/alerts", h.alerts)
 	mux.HandleFunc("POST /v1/events", h.ingest)
 	return mux
 }
@@ -89,24 +100,16 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
-	if !isLoopbackRequest(r) {
-		http.Error(w, "event data is available from this machine only", http.StatusForbidden)
+	if !h.requireLoopback(w, r) {
 		return
 	}
 	if h.eventReader == nil {
 		http.Error(w, "event store is not configured", http.StatusServiceUnavailable)
 		return
 	}
-	limit := 100
-	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
-		parsed, err := strconv.Atoi(rawLimit)
-		if err != nil || parsed < 1 {
-			http.Error(w, "limit must be a positive integer", http.StatusBadRequest)
-			return
-		}
-		if parsed < limit {
-			limit = parsed
-		}
+	limit, ok := requestedLimit(w, r)
+	if !ok {
+		return
 	}
 	events, err := h.eventReader.ListRecentEvents(r.Context(), limit)
 	if err != nil {
@@ -118,6 +121,53 @@ func (h *Handler) events(w http.ResponseWriter, r *http.Request) {
 	if err := json.NewEncoder(w).Encode(events); err != nil {
 		return
 	}
+}
+
+func (h *Handler) alerts(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLoopback(w, r) {
+		return
+	}
+	if h.alertReader == nil {
+		http.Error(w, "alert store is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	limit, ok := requestedLimit(w, r)
+	if !ok {
+		return
+	}
+	alerts, err := h.alertReader.ListRecentAlerts(r.Context(), limit)
+	if err != nil {
+		http.Error(w, "could not load alert records", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(alerts); err != nil {
+		return
+	}
+}
+
+func (h *Handler) requireLoopback(w http.ResponseWriter, r *http.Request) bool {
+	if isLoopbackRequest(r) {
+		return true
+	}
+	http.Error(w, "dashboard data is available from this machine only", http.StatusForbidden)
+	return false
+}
+
+func requestedLimit(w http.ResponseWriter, r *http.Request) (int, bool) {
+	limit := 100
+	if rawLimit := r.URL.Query().Get("limit"); rawLimit != "" {
+		parsed, err := strconv.Atoi(rawLimit)
+		if err != nil || parsed < 1 {
+			http.Error(w, "limit must be a positive integer", http.StatusBadRequest)
+			return 0, false
+		}
+		if parsed < limit {
+			limit = parsed
+		}
+	}
+	return limit, true
 }
 
 func isLoopbackRequest(r *http.Request) bool {
