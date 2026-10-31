@@ -1,5 +1,5 @@
 [workspace]
-members = ["core", "sensors-windows"]
+members = ["core"]
 resolver = "2"
 
 [workspace.dependencies]

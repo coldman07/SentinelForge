@@ -12,10 +12,8 @@ import (
 )
 
 const (
-	eventStreamName  = "SENTINELFORGE_EVENTS"
-	eventSubjectRoot = "sentinelforge.events.v1"
-	alertStreamName  = "SENTINELFORGE_ALERTS"
-	alertSubjectRoot = "sentinelforge.alerts.v1"
+	streamName  = "SENTINELFORGE_EVENTS"
+	subjectRoot = "sentinelforge.events.v1"
 )
 
 // JetStreamPublisher publishes validated events to a durable NATS stream.
@@ -38,30 +36,19 @@ func Connect(url string) (*JetStreamPublisher, *nats.Conn, error) {
 		conn.Close()
 		return nil, nil, fmt.Errorf("initialize JetStream client: %w", err)
 	}
-	streams := []nats.StreamConfig{
-		{
-			Name:      eventStreamName,
-			Subjects:  []string{eventSubjectRoot + ".>"},
+	if _, err := js.StreamInfo(streamName); errors.Is(err, nats.ErrStreamNotFound) {
+		if _, addErr := js.AddStream(&nats.StreamConfig{
+			Name:      streamName,
+			Subjects:  []string{subjectRoot + ".>"},
 			Retention: nats.LimitsPolicy,
 			Storage:   nats.FileStorage,
-		},
-		{
-			Name:      alertStreamName,
-			Subjects:  []string{alertSubjectRoot + ".>"},
-			Retention: nats.LimitsPolicy,
-			Storage:   nats.FileStorage,
-		},
-	}
-	for _, config := range streams {
-		if _, err := js.StreamInfo(config.Name); errors.Is(err, nats.ErrStreamNotFound) {
-			if _, addErr := js.AddStream(&config); addErr != nil {
-				conn.Close()
-				return nil, nil, fmt.Errorf("ensure JetStream stream %s: %w", config.Name, addErr)
-			}
-		} else if err != nil {
+		}); addErr != nil {
 			conn.Close()
-			return nil, nil, fmt.Errorf("inspect JetStream stream %s: %w", config.Name, err)
+			return nil, nil, fmt.Errorf("ensure JetStream stream: %w", addErr)
 		}
+	} else if err != nil {
+		conn.Close()
+		return nil, nil, fmt.Errorf("inspect JetStream stream: %w", err)
 	}
 
 	return &JetStreamPublisher{js: js}, conn, nil
@@ -75,7 +62,7 @@ func (p *JetStreamPublisher) Publish(event ingest.Event) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	if _, err := p.js.Publish(eventSubjectRoot+"."+event.Category, body, nats.Context(ctx)); err != nil {
+	if _, err := p.js.Publish(subjectRoot+"."+event.Category, body, nats.Context(ctx)); err != nil {
 		return fmt.Errorf("publish event: %w", err)
 	}
 	return nil
@@ -88,19 +75,8 @@ func (p *JetStreamPublisher) Consume(
 	durableName string,
 	handler func(context.Context, []byte) error,
 ) error {
-	return p.ConsumeSubject(ctx, eventSubjectRoot+".>", durableName, handler)
-}
-
-// ConsumeSubject consumes a JetStream subject with an independent durable
-// consumer and acknowledges messages only after handler succeeds.
-func (p *JetStreamPublisher) ConsumeSubject(
-	ctx context.Context,
-	subject string,
-	durableName string,
-	handler func(context.Context, []byte) error,
-) error {
 	subscription, err := p.js.PullSubscribe(
-		subject,
+		subjectRoot+".>",
 		durableName,
 		nats.ManualAck(),
 		nats.AckWait(30*time.Second),
@@ -124,7 +100,7 @@ func (p *JetStreamPublisher) ConsumeSubject(
 		for _, message := range messages {
 			if err := handler(ctx, message.Data); err != nil {
 				if nakErr := message.NakWithDelay(5 * time.Second); nakErr != nil {
-					return fmt.Errorf("reject failed message write: %w (write error: %v)", nakErr, err)
+					return fmt.Errorf("reject failed event write: %w (write error: %v)", nakErr, err)
 				}
 				continue
 			}

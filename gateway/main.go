@@ -8,7 +8,6 @@ import (
 
 	"github.com/coldman07/SentinelForge/gateway/internal/bus"
 	"github.com/coldman07/SentinelForge/gateway/internal/ingest"
-	"github.com/coldman07/SentinelForge/gateway/internal/store"
 )
 
 func main() {
@@ -20,14 +19,6 @@ func main() {
 	if natsURL == "" {
 		natsURL = "nats://127.0.0.1:4222"
 	}
-	clickHouseURL := os.Getenv("SF_CLICKHOUSE_URL")
-	if clickHouseURL == "" {
-		clickHouseURL = "http://127.0.0.1:8123"
-	}
-	clickHouseStore, err := store.NewClickHouseStore(clickHouseURL, os.Getenv("SF_CLICKHOUSE_USER"), os.Getenv("SF_CLICKHOUSE_PASSWORD"))
-	if err != nil {
-		log.Fatal(err)
-	}
 	publisher, connection, err := bus.Connect(natsURL)
 	if err != nil {
 		log.Fatal(err)
@@ -36,7 +27,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              address,
-		Handler:           ingest.NewHandlerWithAlerts(publisher, clickHouseStore),
+		Handler:           ingest.NewHandler(publisher),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

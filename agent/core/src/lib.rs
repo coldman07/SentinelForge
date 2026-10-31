@@ -44,7 +44,6 @@ pub struct RawSource {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ProcessReference {
     pub pid: u64,
-    #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
 }
 
@@ -136,24 +135,17 @@ pub struct NetworkConnect {
 }
 
 impl ProcessStart {
-    /// Build a shared process-start envelope from a platform sensor observation.
-    #[allow(clippy::too_many_arguments)]
-    pub fn from_observation(
+    /// Build the shared process-start envelope from a successful eBPF exec
+    /// observation. Callers supply host identity, wall-clock time, and UUID.
+    pub fn from_exec_observation(
         event_id: String,
         timestamp: String,
         host: Host,
         pid: u32,
         user: Option<User>,
         filename: &str,
-        command_line: &str,
-        parent: Option<ProcessReference>,
-        source: &str,
-        provider: &str,
     ) -> Self {
-        let name = filename
-            .rsplit(|ch| ch == '/' || ch == '\\')
-            .next()
-            .unwrap_or(filename);
+        let name = filename.rsplit('/').next().unwrap_or(filename);
         Self {
             event_id,
             timestamp,
@@ -165,40 +157,17 @@ impl ProcessStart {
                 pid: u64::from(pid),
                 name: name.into(),
                 path: filename.into(),
-                command_line: command_line.into(),
+                // The eBPF slice captures the executable path, not argv yet.
+                command_line: filename.into(),
                 hash: None,
-                parent,
+                parent: None,
             },
             raw: RawSource {
-                source: source.into(),
-                provider: provider.into(),
+                source: "eBPF".into(),
+                provider: "sys_enter/exit_execve".into(),
             },
             schema_version: SCHEMA_VERSION.into(),
         }
-    }
-
-    /// Build the shared process-start envelope from a successful eBPF exec
-    /// observation. Linux does not currently collect the full argv list.
-    pub fn from_exec_observation(
-        event_id: String,
-        timestamp: String,
-        host: Host,
-        pid: u32,
-        user: Option<User>,
-        filename: &str,
-    ) -> Self {
-        Self::from_observation(
-            event_id,
-            timestamp,
-            host,
-            pid,
-            user,
-            filename,
-            filename,
-            None,
-            "eBPF",
-            "sys_enter/exit_execve",
-        )
     }
 
     pub fn to_json(&self) -> Result<String, serde_json::Error> {

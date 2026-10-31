@@ -7,7 +7,6 @@
 //! weakening a rule.
 
 use regex::Regex;
-use serde::Serialize;
 use serde_yaml::{Mapping, Value as YamlValue};
 use std::collections::BTreeMap;
 use thiserror::Error;
@@ -56,7 +55,7 @@ struct LogSource {
 }
 
 /// Metadata for a rule that matched an event.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DetectionMatch {
     pub rule_id: Option<String>,
     pub title: String,
@@ -710,143 +709,4 @@ impl Condition {
 
 fn selection_pattern_matches(pattern: &str, name: &str) -> bool {
     wildcard_match(&name.to_ascii_lowercase(), &pattern.to_ascii_lowercase())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::{RuleError, SigmaEngine, SigmaRule};
-    use serde_json::json;
-
-    fn event() -> serde_json::Value {
-        json!({
-            "host": {"os": "windows"},
-            "category": "process",
-            "action": "create",
-            "process": {
-                "path": "C:\\Windows\\System32\\PowerShell.exe",
-                "command_line": "powershell.exe -enc payload",
-                "pid": 42
-            }
-        })
-    }
-
-    #[test]
-    fn evaluates_conditions_modifiers_and_metadata() {
-        let rule = SigmaRule::from_yaml(
-            r#"
-title: Encoded PowerShell
-id: test-rule
-level: high
-tags: [attack.execution]
-logsource:
-  product: windows
-  category: process_creation
-detection:
-  image:
-    Image|endswith: powershell.exe
-  command:
-    CommandLine|contains: -enc
-  condition: image and command
-"#,
-        )
-        .unwrap();
-
-        let matched = rule.evaluate(&event()).unwrap();
-        assert_eq!(matched.rule_id.as_deref(), Some("test-rule"));
-        assert_eq!(matched.title, "Encoded PowerShell");
-        assert_eq!(matched.level.as_deref(), Some("high"));
-        assert_eq!(matched.tags, ["attack.execution"]);
-    }
-
-    #[test]
-    fn supports_selection_quantifiers_and_field_existence() {
-        let rule = SigmaRule::from_yaml(
-            r#"
-title: Process field checks
-detection:
-  selection_a:
-    Image|endswith: powershell.exe
-  selection_b:
-    ProcessId|exists: true
-  condition: 2 of selection_*
-"#,
-        )
-        .unwrap();
-        assert!(rule.matches(&event()));
-
-        let absent_field = SigmaRule::from_yaml(
-            r#"
-title: Missing field
-detection:
-  selection:
-    Authentication|exists: false
-  condition: selection
-"#,
-        )
-        .unwrap();
-        assert!(absent_field.matches(&event()));
-    }
-
-    #[test]
-    fn rejects_unknown_selections_and_unsupported_modifiers() {
-        let unknown_selection = SigmaRule::from_yaml(
-            r#"
-title: Invalid reference
-detection:
-  selection:
-    Image: powershell.exe
-  condition: missing
-"#,
-        );
-        assert!(matches!(
-            unknown_selection,
-            Err(RuleError::InvalidCondition(_))
-        ));
-
-        let unsupported_modifier = SigmaRule::from_yaml(
-            r#"
-title: Unsupported modifier
-detection:
-  selection:
-    Image|cidr: 192.0.2.0/24
-  condition: selection
-"#,
-        );
-        assert!(matches!(
-            unsupported_modifier,
-            Err(RuleError::UnsupportedModifier(_))
-        ));
-    }
-
-    #[test]
-    fn engine_returns_all_matching_rules() {
-        let mut engine = SigmaEngine::default();
-        engine
-            .add_rule_yaml(
-                r#"
-title: First
-detection:
-  selection:
-    Image|endswith: powershell.exe
-  condition: selection
-"#,
-            )
-            .unwrap();
-        engine
-            .add_rule_yaml(
-                r#"
-title: Second
-detection:
-  selection:
-    ProcessId: 42
-  condition: selection
-"#,
-            )
-            .unwrap();
-
-        let matches = engine.evaluate(&event());
-        assert_eq!(matches.len(), 2);
-        assert_eq!(matches[0].title, "First");
-        assert_eq!(matches[1].title, "Second");
-    }
 }

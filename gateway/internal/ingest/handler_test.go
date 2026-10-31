@@ -1,12 +1,9 @@
 package ingest
 
 import (
-	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
-	"regexp"
 	"strings"
 	"testing"
 )
@@ -15,27 +12,6 @@ type recordingPublisher struct {
 	event Event
 	err   error
 	calls int
-}
-
-type recordingAlertReader struct {
-	alerts []json.RawMessage
-	alert  json.RawMessage
-	err    error
-	limit  int
-	calls  int
-	id     string
-}
-
-func (r *recordingAlertReader) ListAlerts(_ context.Context, limit int) ([]json.RawMessage, error) {
-	r.limit = limit
-	r.calls++
-	return r.alerts, r.err
-}
-
-func (r *recordingAlertReader) GetAlert(_ context.Context, eventID string) (json.RawMessage, error) {
-	r.id = eventID
-	r.calls++
-	return r.alert, r.err
 }
 
 func (p *recordingPublisher) Publish(event Event) error {
@@ -142,124 +118,5 @@ func TestHealthReturnsNoContent(t *testing.T) {
 
 	if response.Code != http.StatusNoContent {
 		t.Fatalf("status = %d, want %d", response.Code, http.StatusNoContent)
-	}
-}
-
-func TestDashboardServesEmbeddedPage(t *testing.T) {
-	request := httptest.NewRequest(http.MethodGet, "/", nil)
-	response := httptest.NewRecorder()
-
-	NewHandler(nil).ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusOK)
-	}
-	if !strings.Contains(response.Header().Get("Content-Type"), "text/html") {
-		t.Fatalf("Content-Type = %q, want text/html", response.Header().Get("Content-Type"))
-	}
-	if !strings.Contains(response.Body.String(), "SentinelForge") {
-		t.Fatal("dashboard page does not contain its title")
-	}
-	assetPath := regexp.MustCompile(`src="([^"]+\.js)"`).FindStringSubmatch(response.Body.String())
-	if len(assetPath) != 2 {
-		t.Fatal("dashboard page does not reference its JavaScript bundle")
-	}
-	assetRequest := httptest.NewRequest(http.MethodGet, assetPath[1], nil)
-	assetResponse := httptest.NewRecorder()
-	NewHandler(nil).ServeHTTP(assetResponse, assetRequest)
-	if assetResponse.Code != http.StatusOK {
-		t.Fatalf("JavaScript bundle status = %d, want %d", assetResponse.Code, http.StatusOK)
-	}
-	if !strings.Contains(assetResponse.Header().Get("Content-Type"), "javascript") {
-		t.Fatalf("JavaScript bundle Content-Type = %q", assetResponse.Header().Get("Content-Type"))
-	}
-}
-
-func TestAlertsAreLoopbackOnly(t *testing.T) {
-	reader := &recordingAlertReader{}
-	request := httptest.NewRequest(http.MethodGet, "/v1/alerts", nil)
-	request.RemoteAddr = "192.0.2.1:1234"
-	response := httptest.NewRecorder()
-
-	NewHandlerWithAlerts(nil, reader).ServeHTTP(response, request)
-
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
-	}
-	if reader.calls != 0 {
-		t.Fatalf("alert reader calls = %d, want 0", reader.calls)
-	}
-}
-
-func TestAlertsEndpointCapsLimitAndReturnsNoStore(t *testing.T) {
-	reader := &recordingAlertReader{alerts: []json.RawMessage{json.RawMessage(`{"event_id":"event-1"}`)}}
-	request := httptest.NewRequest(http.MethodGet, "/v1/alerts?limit=500", nil)
-	request.RemoteAddr = "127.0.0.1:1234"
-	response := httptest.NewRecorder()
-
-	NewHandlerWithAlerts(nil, reader).ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
-	}
-	if reader.limit != 100 {
-		t.Fatalf("reader limit = %d, want 100", reader.limit)
-	}
-	if response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
-	}
-	if !strings.Contains(response.Body.String(), `"event_id":"event-1"`) {
-		t.Fatalf("response does not contain alert record: %s", response.Body.String())
-	}
-}
-
-func TestAlertEvidenceIsLoopbackOnly(t *testing.T) {
-	reader := &recordingAlertReader{alert: json.RawMessage(`{"event_id":"event-1"}`)}
-	request := httptest.NewRequest(http.MethodGet, "/v1/alerts/event-1", nil)
-	request.RemoteAddr = "192.0.2.1:1234"
-	response := httptest.NewRecorder()
-
-	NewHandlerWithAlerts(nil, reader).ServeHTTP(response, request)
-
-	if response.Code != http.StatusForbidden {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusForbidden)
-	}
-	if reader.calls != 0 {
-		t.Fatalf("alert reader calls = %d, want 0", reader.calls)
-	}
-}
-
-func TestAlertEvidenceReturnsStoredRecord(t *testing.T) {
-	reader := &recordingAlertReader{alert: json.RawMessage(`{"event_id":"event-1","matches":[]}`)}
-	request := httptest.NewRequest(http.MethodGet, "/v1/alerts/event-1", nil)
-	request.RemoteAddr = "127.0.0.1:1234"
-	response := httptest.NewRecorder()
-
-	NewHandlerWithAlerts(nil, reader).ServeHTTP(response, request)
-
-	if response.Code != http.StatusOK {
-		t.Fatalf("status = %d, want %d; body: %s", response.Code, http.StatusOK, response.Body.String())
-	}
-	if reader.id != "event-1" {
-		t.Fatalf("requested event ID = %q, want event-1", reader.id)
-	}
-	if response.Header().Get("Cache-Control") != "no-store" {
-		t.Fatalf("Cache-Control = %q, want no-store", response.Header().Get("Cache-Control"))
-	}
-	if !strings.Contains(response.Body.String(), `"matches":[]`) {
-		t.Fatalf("response does not contain evidence: %s", response.Body.String())
-	}
-}
-
-func TestAlertEvidenceReturnsNotFoundWhenMissing(t *testing.T) {
-	reader := &recordingAlertReader{}
-	request := httptest.NewRequest(http.MethodGet, "/v1/alerts/missing", nil)
-	request.RemoteAddr = "127.0.0.1:1234"
-	response := httptest.NewRecorder()
-
-	NewHandlerWithAlerts(nil, reader).ServeHTTP(response, request)
-
-	if response.Code != http.StatusNotFound {
-		t.Fatalf("status = %d, want %d", response.Code, http.StatusNotFound)
 	}
 }

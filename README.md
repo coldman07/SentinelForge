@@ -18,7 +18,7 @@
 
 ---
 
-> 🚧 **Project status: early development.** The first implementation slices are in place: the Protobuf event contract, Go ingestion gateway, NATS JetStream bus, ClickHouse event and alert store, Linux eBPF process/file/network sensors, a Windows ETW process-start sensor, a Rust Sigma evaluator that consumes events and publishes matches to a durable alerts stream, and a local React analyst dashboard with evidence inspection and browser-local triage. Shared case management, hunting, Windows file/network/authentication sensors, and the remaining platform services are still planned.
+> 🚧 **Project status: early development.** The first implementation slices are in place: the Protobuf event contract, Go ingestion gateway, NATS JetStream bus, ClickHouse event store, Linux eBPF process/file/network sensors, and a standalone Rust Sigma evaluator. The evaluator and event store are not yet connected into a complete alerting pipeline. Windows support, the dashboard, and the remaining platform services are still planned.
 
 > ⚠️ **Authorised use only.** Deploy agents only on systems you own or have explicit written permission to monitor, and run all attack simulations in an isolated lab.
 
@@ -169,11 +169,11 @@ flowchart LR
 ### 1. Endpoint agent (Rust)
 A small, privileged, self-protecting sensor.
 
-**Implemented slices:** the Linux Rust loader and eBPF programs emit process, file and network events in the shared JSON shape. The initial Windows Rust sensor reads process-start events from `Microsoft-Windows-Kernel-Process` ETW and emits the same event shape. Windows collection currently covers process starts only and requires an elevated session. Authentication, file and network sensors, service and persistence events, and the local queue/governor remain planned.
+**Implemented Linux slice:** the Rust loader and eBPF programs emit process, file and network events in the shared JSON shape. Authentication, service and persistence sensors, the local queue/governor, and the Windows agent remain planned.
 
 | Category | Windows | Linux |
 |---|---|---|
-| **Process** | ETW `Microsoft-Windows-Kernel-Process` (process start) | eBPF (`execve`, `exit`, fork lineage) |
+| **Process** | ETW kernel/process providers, process-creation callbacks (driver) | eBPF (`execve`, `exit`, fork lineage) |
 | **Authentication** | Security log (4624/4625/4648/4672) via ETW/EvtSubscribe | journald (sshd, sudo, PAM), auth logs |
 | **File** | ETW file providers, minifilter (optional) | eBPF / fanotify on selected paths |
 | **Service** | Service install/start events (7045, SCM) | systemd unit events |
@@ -183,13 +183,13 @@ A small, privileged, self-protecting sensor.
 Agent responsibilities: collect → filter → enrich locally (hashes, lineage) → queue on disk → ship over mTLS. A **resource governor** caps CPU/RAM/IO, and a **local queue** survives network loss.
 
 ### 2. Ingestion gateway (Go)
-The gateway validates one JSON event against the current schema and publishes accepted events to the durable NATS JetStream stream. It also serves the local React dashboard and loopback-only summary and evidence endpoints. Agent authentication, Protobuf/gRPC transport, normalisation, rate limiting and back-pressure remain planned.
+The gateway validates one JSON event against the current schema and publishes accepted events to the durable NATS JetStream stream. Agent authentication, Protobuf/gRPC transport, normalisation, rate limiting and back-pressure remain planned.
 
 ### 3. Event bus
-NATS JetStream decouples ingestion from consumers. The ClickHouse event-store consumer and Sigma detection service read separate durable streams; each acknowledges messages after storage or alert publishing succeeds. UEBA is not connected yet. Kafka/Redpanda remains an alternative for a later deployment profile.
+NATS JetStream decouples ingestion from consumers. The current ClickHouse consumer reads the durable event stream and acknowledges each event after the insert succeeds. Detection and UEBA consumers are not connected yet. Kafka/Redpanda remains an alternative for a later deployment profile.
 
 ### 4. Detection engine (Rust)
-The Rust detection service loads Sigma YAML rules, consumes normalized events from JetStream, and publishes matches to the durable `SENTINELFORGE_ALERTS` stream. The evaluator supports a documented Sigma subset: selection conditions, common field modifiers, logsource filters and rule metadata. Native rules, threshold/sequence logic, ATT&CK mappings and hot reload remain planned.
+The standalone Rust library parses and evaluates a documented Sigma subset against normalized JSON events. It supports selection conditions, common field modifiers, logsource filters and multi-rule evaluation with rule metadata. It is not yet consuming the event stream. Native rules, threshold/sequence logic, ATT&CK mappings and hot reload remain planned.
 
 ### 5. UEBA service (Python)
 Builds per-user, per-host and per-process baselines (logon patterns, rare binaries, unusual parent-child pairs, rare destinations) and emits an **explainable anomaly score** with its top contributing features. It runs off the hot path and consumes the bus. *(scikit-learn, PyOD, River, SHAP)*
@@ -201,15 +201,15 @@ Adds indicator matches (hashes, IPs, domains), vulnerability context (CISA KEV, 
 Links alerts and events by entity, process tree, time window and ATT&CK technique progression into one **evidence-linked incident timeline** (initial access → execution → persistence → credential access → lateral movement).
 
 ### 8. Storage
-- **ClickHouse:** the event-store consumer persists searchable event envelope fields and full event JSON in `sentinelforge.events`, plus alert metadata and evidence JSON in `sentinelforge.alerts`. Loopback-only endpoints return recent summaries and full evidence by event ID; broader query and hunting APIs are planned. Detection matches also remain in the durable NATS alerts stream.
+- **ClickHouse:** the current event-store consumer persists searchable event envelope fields and the full event JSON in `sentinelforge.events`. Alert storage, query APIs and hunting are planned.
 - **OpenSearch:** a possible alternative or complementary search backend for a later deployment profile.
 - **PostgreSQL:** rules and versions, users and roles, incidents, policies, approvals, audit log.
 
 ### 9. Control plane (Go) and policy engine
 Handles enrolment, configuration, signed agent/rule updates, response orchestration and RBAC. **Open Policy Agent (OPA)** evaluates approval policies as code.
 
-### 10. Analyst dashboard
-The local React dashboard summarizes recent detections, severity and affected hosts, with a searchable, filterable alert queue. An investigation drawer shows the stored event payload and matching Sigma metadata, allows evidence export, and records open/investigating/resolved state plus analyst notes in browser-local storage. This is a local triage aid, not shared case management; incident timelines, host and user views, hunting, rule management, approval queues and assistant chat remain planned.
+### 10. Analyst dashboard (React + TypeScript)
+Alert triage, incident timelines, host and user views, hunting, rule management, approval queues and the assistant chat.
 
 ## 📐 Event Schema
 
@@ -358,16 +358,15 @@ SentinelForge/
 │   ├── sensors-windows/    # ETW consumers; driver/ for the kernel component
 │   └── updater/            # signed update client
 ├── proto/                  # Protobuf: events, enrolment, commands
-├── gateway/                # Go: ingestion, JetStream event/alert consumers, ClickHouse store
+├── gateway/                # Go: ingestion, JetStream consumer, ClickHouse event store
 ├── control-plane/          # Go: enrolment, policy, response, updates, RBAC
 ├── detection/              # Rust: standalone Sigma parser and evaluator (subset)
 ├── correlation/            # attack-chain builder and timeline service
 ├── ml/                     # Python: UEBA features, models, explainability
 ├── assistant/              # Python: agent, read-only tools, guardrails
 ├── rulelifecycle/          # generate, validate, replay, approve, version, roll back
-├── dashboard-ui/            # React + TypeScript analyst console source
-├── gateway/internal/dashboard/ # embedded production dashboard bundle
-├── rules/                  # Sigma and native rule packs; includes a safe demo rule
+├── dashboard/              # React + TypeScript UI
+├── rules/                  # Sigma and native rule packs
 ├── policy/                 # OPA/Rego policies
 ├── datasets/               # labelled attack scenarios and benign baselines
 ├── evaluation/             # benchmark harness and reports
@@ -378,7 +377,7 @@ SentinelForge/
 
 ## 🚀 Getting Started
 
-> The full platform is not runnable yet. To run the current local pipeline, start NATS and ClickHouse, then run the gateway, event-store consumer and Rust detection service in separate terminals.
+> The full platform is not runnable yet. To run the current local ingestion and storage slice, start NATS and ClickHouse, then run the gateway and event-store consumer in separate terminals. The detection evaluator is a library and is not yet wired into this stream.
 
 ```bash
 git clone https://github.com/coldman07/SentinelForge.git
@@ -392,8 +391,6 @@ cd gateway
 go run .
 ```
 
-Open `http://127.0.0.1:8080/` on the gateway machine to view the local dashboard. Alert data from `GET /v1/alerts` is restricted to loopback requests.
-
 **Terminal 2, from the repository root:** start the ClickHouse consumer.
 
 ```bash
@@ -401,21 +398,13 @@ cd gateway
 go run ./cmd/event-store
 ```
 
-**Terminal 3, from the repository root:** start the Sigma detection service.
-
-```bash
-cargo run --manifest-path detection/Cargo.toml
-```
-
-The service loads `.yml` and `.yaml` rules recursively from `rules/sigma` by default. Set `SF_RULES_DIR` to use another rule directory. Matching events are published to the durable `SENTINELFORGE_ALERTS` stream.
-
 Linux sensor build and run details are in [`agent/sensors-linux/README.md`](agent/sensors-linux/README.md). Unified agent enrollment and service installation are not implemented yet.
 
 **Recommended lab setup:** an isolated network with one Linux and one Windows VM as endpoints, plus a host with at least 8 GB RAM for the server stack.
 
 ## ⚙️ Configuration
 
-The local gateway, event store and detection service read these development settings:
+The local gateway and event store read these development settings:
 
 | Variable | Description | Example |
 |---|---|---|
@@ -424,7 +413,6 @@ The local gateway, event store and detection service read these development sett
 | `SF_CLICKHOUSE_URL` | ClickHouse HTTP endpoint | `http://127.0.0.1:8123` |
 | `SF_CLICKHOUSE_USER` | ClickHouse username (optional for local default setup) | `default` |
 | `SF_CLICKHOUSE_PASSWORD` | ClickHouse password (optional for local default setup) | *(empty)* |
-| `SF_RULES_DIR` | Directory containing Sigma YAML rules | `rules/sigma` |
 
 Database, assistant, response-mode and agent-governor settings remain planned.
 
@@ -470,14 +458,11 @@ An EDR is a high-value target, so its own security is a first-class requirement.
 - [x] Architecture and design
 - [x] **M1** — Initial event schema (Protobuf), Go gateway and NATS JetStream publishing
 - [x] **M2** — Linux eBPF process, file and network sensor slice
-- [x] **M3** — Detection engine with Sigma support, event store, analyst dashboard
+- [ ] **M3** — Detection engine with Sigma support, event store, basic dashboard
   - [x] ClickHouse event-store consumer
-  - [x] Rust Sigma parser/evaluator and JetStream consumer publishing matches to a durable alert stream
-  - [x] Persist detection alerts in ClickHouse
-  - [x] Basic local read-only dashboard for recent alert summaries
+  - [x] Standalone Rust Sigma parsing and evaluation library
+  - [ ] Connect detection evaluation to the event stream; persist alerts; build dashboard
 - [ ] **M4** — Windows agent: ETW telemetry
-  - [x] Initial process-start telemetry from `Microsoft-Windows-Kernel-Process`
-  - [ ] Authentication, file and network telemetry plus endpoint service integration
 - [ ] **M5** — UEBA baselines and explainable anomaly scoring
 - [ ] **M6** — Enrichment, ATT&CK mapping and attack-chain correlation
 - [ ] **M7** — AI assistant with read-only tools and citations
