@@ -1,0 +1,21 @@
+[workspace]
+members = ["common", "ebpf", "loader"]
+resolver = "2"
+default-members = ["loader"]
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+
+[workspace.dependencies]
+aya = { version = "0.14.0", default-features = false }
+aya-build = { version = "0.2.0", default-features = false }
+aya-ebpf = { version = "0.2.1", default-features = false }
+anyhow = "1"
+cargo_metadata = "0.23.0"
+which = "6.0.0"
+
+[profile.release.package.sentinelforge-process-ebpf]
+debug = 2
+codegen-units = 1
+strip = false

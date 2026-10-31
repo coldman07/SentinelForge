@@ -181,10 +181,10 @@ A small, privileged, self-protecting sensor.
 Agent responsibilities: collect → filter → enrich locally (hashes, lineage) → queue on disk → ship over mTLS. A **resource governor** caps CPU/RAM/IO, and a **local queue** survives network loss.
 
 ### 2. Ingestion gateway (Go)
-Authenticates agents, validates Protobuf payloads against the schema, normalises events, applies rate limits and back-pressure, and publishes to the event bus.
+The initial gateway scaffold validates the documented JSON event shape and publishes accepted events to NATS JetStream. Agent authentication, Protobuf/gRPC transport, normalisation, rate limiting and back-pressure remain planned.
 
 ### 3. Event bus
-NATS JetStream or Kafka decouples ingestion from detection, absorbs spikes and lets multiple consumers (detection, storage, UEBA) read the same stream.
+NATS JetStream decouples ingestion from detection, absorbs spikes and lets multiple consumers (detection, storage, UEBA) read the same durable stream. Kafka/Redpanda remains an alternative for a later deployment profile.
 
 ### 4. Detection engine (Rust)
 Streaming engine that evaluates **Sigma rules** (via a converter/compiler) and native rules, including threshold and sequence logic. Rules are versioned and carry ATT&CK mappings, severity and approval metadata. Hot-reloads approved rules without restarts.
@@ -233,7 +233,7 @@ Telemetry is normalised into a unified cross-platform schema, designed to map cl
 }
 ```
 
-Categories: `process`, `authentication`, `file`, `service`, `persistence`, `network`. The wire format is Protobuf; JSON is shown for readability.
+Categories: `process`, `authentication`, `file`, `service`, `persistence`, `network`. The wire format is Protobuf; JSON is shown for readability. The initial versioned wire contract is [`proto/events/v1/event.proto`](proto/events/v1/event.proto).
 
 ## 🎯 Detection Pipeline
 
@@ -374,7 +374,7 @@ SentinelForge/
 
 ## 🚀 Getting Started
 
-> *(planned)* The platform is not runnable yet. This section shows the intended workflow and will be filled in as components land.
+> The full platform is not runnable yet. The current M1 gateway and NATS bus can be started separately as described in [`gateway/README.md`](gateway/README.md); the endpoint fleet and remaining services are still planned.
 
 ```bash
 git clone https://github.com/coldman07/SentinelForge.git

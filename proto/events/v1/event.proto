@@ -1,0 +1,121 @@
+syntax = "proto3";
+
+package sentinelforge.events.v1;
+
+option go_package = "github.com/coldman07/SentinelForge/proto/events/v1;eventsv1";
+
+import "google/protobuf/timestamp.proto";
+
+// Event is the versioned, platform-neutral envelope emitted by endpoint agents
+// and accepted by the ingestion gateway.
+message Event {
+  // UUID identifying this individual observation.
+  string event_id = 1;
+  google.protobuf.Timestamp timestamp = 2;
+  Host host = 3;
+  Category category = 4;
+  // Category-specific verb, such as "create", "modify", or "logon".
+  string action = 5;
+  User user = 6;
+  RawSource raw = 7;
+  // Schema version is represented by the Protobuf package version. This field
+  // is retained for compatibility with the documented JSON representation.
+  string schema_version = 8;
+  // Links related observations produced by one source operation, such as both
+  // sides of a rename.
+  string correlation_id = 9;
+
+  oneof details {
+    ProcessEvent process = 10;
+    AuthenticationEvent authentication = 11;
+    FileEvent file = 12;
+    ServiceEvent service = 13;
+    PersistenceEvent persistence = 14;
+    NetworkEvent network = 15;
+  }
+}
+
+enum Category {
+  CATEGORY_UNSPECIFIED = 0;
+  CATEGORY_PROCESS = 1;
+  CATEGORY_AUTHENTICATION = 2;
+  CATEGORY_FILE = 3;
+  CATEGORY_SERVICE = 4;
+  CATEGORY_PERSISTENCE = 5;
+  CATEGORY_NETWORK = 6;
+}
+
+message Host {
+  string host_id = 1;
+  string os = 2;
+  string os_version = 3;
+  string agent_version = 4;
+}
+
+message User {
+  string name = 1;
+  string sid = 2;
+  string privilege = 3;
+}
+
+message RawSource {
+  string source = 1;
+  string provider = 2;
+}
+
+message ProcessEvent {
+  uint64 pid = 1;
+  string name = 2;
+  string path = 3;
+  string command_line = 4;
+  Hash hash = 5;
+  ProcessReference parent = 6;
+}
+
+message ProcessReference {
+  uint64 pid = 1;
+  string name = 2;
+}
+
+message Hash {
+  string sha256 = 1;
+}
+
+message AuthenticationEvent {
+  string method = 1;
+  string outcome = 2;
+  string source_address = 3;
+  string target = 4;
+}
+
+message FileEvent {
+  string path = 1;
+  string file_type = 2;
+  Hash hash = 3;
+  uint64 size_bytes = 4;
+  uint32 flags = 5;
+  uint64 bytes_written = 6;
+}
+
+message ServiceEvent {
+  string name = 1;
+  string display_name = 2;
+  string state = 3;
+  string start_type = 4;
+  string executable_path = 5;
+}
+
+message PersistenceEvent {
+  string mechanism = 1;
+  string name = 2;
+  string target = 3;
+}
+
+message NetworkEvent {
+  string protocol = 1;
+  string direction = 2;
+  string local_address = 3;
+  uint32 local_port = 4;
+  string remote_address = 5;
+  uint32 remote_port = 6;
+}
