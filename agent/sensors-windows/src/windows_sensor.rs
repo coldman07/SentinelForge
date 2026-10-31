@@ -3,7 +3,7 @@ use ferrisetw::{
     parser::Parser,
     provider::{
         Provider,
-        kernel_providers::{FILE_IO_PROVIDER, TCP_IP_PROVIDER},
+        kernel_providers::{FILE_IO_PROVIDER, KernelProvider, TCP_IP_PROVIDER},
     },
     schema_locator::SchemaLocator,
     trace::{KernelTrace, UserTrace},
@@ -14,12 +14,14 @@ use sentinelforge_agent_core::{
     RawSource, SCHEMA_VERSION, format_timestamp, uuid_v4_from_random,
 };
 use std::{
+    collections::HashMap,
     env,
     error::Error,
     io,
     net::IpAddr,
     process::Command,
     sync::{
+        Arc, Mutex,
         atomic::{AtomicBool, Ordering},
         mpsc::{self, Receiver, SyncSender, TrySendError},
     },
@@ -32,12 +34,22 @@ const PROCESS_START_EVENT_ID: u16 = 1;
 const PROCESS_KEYWORD: u64 = 0x10;
 const FILE_CREATE_EVENT_ID: u16 = 32;
 const FILE_DELETE_EVENT_ID: u16 = 35;
+const FILE_CLOSE_EVENT_ID: u16 = 66;
+const FILE_WRITE_EVENT_ID: u16 = 68;
+const FILE_OBJECT_PATH_CAPACITY: usize = 65_536;
 const TCP_CONNECT_IPV4_EVENT_ID: u16 = 12;
 const TCP_CONNECT_IPV6_EVENT_ID: u16 = 28;
+const TCP_ACCEPT_IPV4_EVENT_ID: u16 = 15;
+const TCP_ACCEPT_IPV6_EVENT_ID: u16 = 31;
+const UDP_SEND_IPV4_EVENT_ID: u16 = 10;
+const UDP_RECEIVE_IPV4_EVENT_ID: u16 = 11;
+const UDP_SEND_IPV6_EVENT_ID: u16 = 26;
+const UDP_RECEIVE_IPV6_EVENT_ID: u16 = 27;
 const SOURCE: &str = "ETW";
 const PROVIDER_NAME: &str = "Microsoft-Windows-Kernel-Process";
 const FILE_PROVIDER_NAME: &str = "Windows-Kernel-FileIo";
 const NETWORK_PROVIDER_NAME: &str = "Windows-Kernel-TcpIp";
+const UDP_PROVIDER_NAME: &str = "Windows-Kernel-UdpIp";
 const EVENT_QUEUE_CAPACITY: usize = 4096;
 
 static HOST: std::sync::OnceLock<Host> = std::sync::OnceLock::new();
@@ -48,6 +60,23 @@ struct GatewayClient {
 }
 
 pub fn run() -> Result<(), Box<dyn Error>> {
+    let running = Arc::new(AtomicBool::new(true));
+    let signal_state = running.clone();
+    ctrlc::set_handler(move || signal_state.store(false, Ordering::SeqCst))?;
+    run_with_shutdown(running)
+}
+
+pub fn run_with_shutdown(running: Arc<AtomicBool>) -> Result<(), Box<dyn Error>> {
+    run_with_ready_callback(running, || {})
+}
+
+pub fn run_with_ready_callback<F>(
+    running: Arc<AtomicBool>,
+    on_ready: F,
+) -> Result<(), Box<dyn Error>>
+where
+    F: FnOnce(),
+{
     HOST.set(host_identity())
         .map_err(|_| "Windows sensor host identity was initialized more than once")?;
     let gateway = GatewayClient {
@@ -61,21 +90,37 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         .spawn(move || publish_events(event_receiver, gateway))?;
 
     let file_event_sender = event_sender.clone();
+    let file_paths = Arc::new(Mutex::new(HashMap::<u32, String>::new()));
+    let callback_file_paths = file_paths.clone();
     let file_provider = Provider::kernel(&FILE_IO_PROVIDER)
         .add_callback(move |record, schema_locator| {
-            file_callback(record, schema_locator, &file_event_sender)
+            file_callback(
+                record,
+                schema_locator,
+                &file_event_sender,
+                &callback_file_paths,
+            )
         })
         .build();
     let network_event_sender = event_sender.clone();
     let network_provider = Provider::kernel(&TCP_IP_PROVIDER)
         .add_callback(move |record, schema_locator| {
-            network_callback(record, schema_locator, &network_event_sender)
+            network_callback(record, schema_locator, &network_event_sender, "tcp")
+        })
+        .build();
+    let udp_ip_provider =
+        KernelProvider::new("bf3a50c5-a9c9-4988-a005-2df0b7c80f80".into(), 0x0001_0000);
+    let udp_event_sender = event_sender.clone();
+    let udp_provider = Provider::kernel(&udp_ip_provider)
+        .add_callback(move |record, schema_locator| {
+            network_callback(record, schema_locator, &udp_event_sender, "udp")
         })
         .build();
     let mut file_trace = match KernelTrace::new()
         .named(String::from("SentinelForgeWindowsKernel"))
         .enable(file_provider)
         .enable(network_provider)
+        .enable(udp_provider)
         .start_and_process()
     {
         Ok(trace) => Some(trace),
@@ -102,9 +147,12 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         .map_err(|error| format!("start Windows process ETW trace: {error:?}"))?;
 
     eprintln!("SentinelForge Windows ETW process sensor is running");
-    let running = std::sync::Arc::new(AtomicBool::new(true));
-    let signal_state = running.clone();
-    ctrlc::set_handler(move || signal_state.store(false, Ordering::SeqCst))?;
+    let authentication_listener = crate::windows_auth::start_listener(
+        event_sender.clone(),
+        HOST.get().expect("host identity was initialized").clone(),
+        running.clone(),
+    );
+    on_ready();
     while running.load(Ordering::SeqCst) {
         thread::sleep(Duration::from_millis(250));
     }
@@ -116,6 +164,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             .stop()
             .map_err(|error| format!("stop Windows file ETW trace: {error:?}"))?;
     }
+    authentication_listener
+        .join()
+        .map_err(|_| io::Error::other("Windows authentication listener panicked"))?;
     drop(event_sender);
     publisher
         .join()
@@ -203,18 +254,58 @@ fn file_callback(
     record: &EventRecord,
     schema_locator: &SchemaLocator,
     event_sender: &SyncSender<String>,
+    file_paths: &Arc<Mutex<HashMap<u32, String>>>,
 ) {
-    let action = match record.event_id() {
-        FILE_CREATE_EVENT_ID => "create",
-        FILE_DELETE_EVENT_ID => "delete",
-        _ => return,
-    };
+    let event_id = record.event_id();
     let Ok(schema) = schema_locator.event_schema(record) else {
         return;
     };
     let parser = Parser::create(record, &schema);
-    let Ok(path) = parser.try_parse::<String>("FileName") else {
+    if event_id == FILE_CLOSE_EVENT_ID {
+        if let Ok(object) = parser.try_parse::<u32>("FileObject")
+            && let Ok(mut paths) = file_paths.lock()
+        {
+            paths.remove(&object);
+        }
         return;
+    }
+    let (action, path, bytes_written) = match event_id {
+        FILE_CREATE_EVENT_ID | FILE_DELETE_EVENT_ID => {
+            let action = if event_id == FILE_CREATE_EVENT_ID {
+                "create"
+            } else {
+                "delete"
+            };
+            let Ok(path) = parser.try_parse::<String>("FileName") else {
+                return;
+            };
+            if event_id == FILE_CREATE_EVENT_ID
+                && let Ok(object) = parser.try_parse::<u32>("FileObject")
+                && let Ok(mut paths) = file_paths.lock()
+            {
+                if paths.len() >= FILE_OBJECT_PATH_CAPACITY {
+                    if let Some(oldest_object) = paths.keys().next().copied() {
+                        paths.remove(&oldest_object);
+                    }
+                }
+                paths.insert(object, path.clone());
+            }
+            (action, path, None)
+        }
+        FILE_WRITE_EVENT_ID => {
+            let (Ok(object), Ok(size)) = (
+                parser.try_parse::<u32>("FileObject"),
+                parser.try_parse::<u32>("IoSize"),
+            ) else {
+                return;
+            };
+            let Ok(paths) = file_paths.lock() else { return };
+            let Some(path) = paths.get(&object).cloned() else {
+                return;
+            };
+            ("write", path, (size > 0).then_some(u64::from(size)))
+        }
+        _ => return,
     };
     if path.trim().is_empty() {
         return;
@@ -241,7 +332,7 @@ fn file_callback(
             hash: None,
             size_bytes: None,
             flags: 0,
-            bytes_written: None,
+            bytes_written,
         },
         raw: RawSource {
             source: "ETW".into(),
@@ -269,9 +360,21 @@ fn network_callback(
     record: &EventRecord,
     schema_locator: &SchemaLocator,
     event_sender: &SyncSender<String>,
+    protocol: &str,
 ) {
-    let protocol = match record.event_id() {
-        TCP_CONNECT_IPV4_EVENT_ID | TCP_CONNECT_IPV6_EVENT_ID => "tcp",
+    let (action, direction, provider) = match (protocol, record.event_id()) {
+        ("tcp", TCP_CONNECT_IPV4_EVENT_ID | TCP_CONNECT_IPV6_EVENT_ID) => {
+            ("connect", "outbound", NETWORK_PROVIDER_NAME)
+        }
+        ("tcp", TCP_ACCEPT_IPV4_EVENT_ID | TCP_ACCEPT_IPV6_EVENT_ID) => {
+            ("accept", "inbound", NETWORK_PROVIDER_NAME)
+        }
+        ("udp", UDP_SEND_IPV4_EVENT_ID | UDP_SEND_IPV6_EVENT_ID) => {
+            ("send", "outbound", UDP_PROVIDER_NAME)
+        }
+        ("udp", UDP_RECEIVE_IPV4_EVENT_ID | UDP_RECEIVE_IPV6_EVENT_ID) => {
+            ("receive", "inbound", UDP_PROVIDER_NAME)
+        }
         _ => return,
     };
     let Ok(schema) = schema_locator.event_schema(record) else {
@@ -286,6 +389,11 @@ fn network_callback(
     ) else {
         return;
     };
+    let (local_address, remote_address, local_port, remote_port) = if direction == "inbound" {
+        (remote_address, local_address, remote_port, local_port)
+    } else {
+        (local_address, remote_address, local_port, remote_port)
+    };
     let Some(timestamp) = wall_clock_timestamp() else {
         return;
     };
@@ -299,11 +407,11 @@ fn network_callback(
         timestamp,
         host: host.clone(),
         category: "network",
-        action: "connect".into(),
+        action: action.into(),
         user: None,
         network: NetworkDetails {
             protocol: protocol.into(),
-            direction: "outbound".into(),
+            direction: direction.into(),
             local_address: local_address.to_string(),
             local_port: u32::from(local_port),
             remote_address: remote_address.to_string(),
@@ -311,7 +419,7 @@ fn network_callback(
         },
         raw: RawSource {
             source: "ETW".into(),
-            provider: NETWORK_PROVIDER_NAME.into(),
+            provider: provider.into(),
         },
         schema_version: SCHEMA_VERSION.into(),
     };
@@ -343,7 +451,7 @@ fn publish_events(receiver: Receiver<String>, gateway: GatewayClient) {
             })
             .unwrap_or_else(|| "unknown".into());
         if let Err(error) = gateway.publish(&event) {
-            eprintln!("could not send process event {event_id} to gateway: {error}");
+            eprintln!("could not send telemetry event {event_id} to gateway: {error}");
         }
     }
 }

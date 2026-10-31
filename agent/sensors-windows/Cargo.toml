@@ -3,7 +3,7 @@ name = "sentinelforge-windows-sensor"
 version = "0.1.0"
 edition = "2024"
 license = "Apache-2.0"
-description = "Windows ETW process-start sensor for SentinelForge"
+description = "Windows ETW telemetry sensor and service for SentinelForge"
 
 [dependencies]
 sentinelforge-agent-core = { path = "../core" }
@@ -14,3 +14,5 @@ ferrisetw = "1.2"
 getrandom = "0.3"
 reqwest = { version = "0.13", default-features = false, features = ["blocking", "json", "rustls"] }
 serde_json = "1"
+windows = { version = "0.57", features = ["Win32_Foundation", "Win32_System_EventLog"] }
+windows-service = "0.7"

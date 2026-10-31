@@ -18,7 +18,7 @@
 
 ---
 
-> 🚧 **Project status: early development.** The first implementation slices are in place: the Protobuf event contract, Go ingestion gateway, NATS JetStream bus, ClickHouse event and alert store, Linux eBPF process/file/network sensors, Windows ETW process/file/TCP-connect sensors that forward events to the gateway, a Rust Sigma worker, and a local dashboard for telemetry and detections. Windows authentication, UDP/inbound-network telemetry and remaining platform services are still planned.
+> 🚧 **Project status: early development.** The first implementation slices are in place: the Protobuf event contract, Go ingestion gateway, NATS JetStream bus, ClickHouse event and alert store, Linux eBPF process/file/network sensors, Windows ETW process/file/TCP/UDP sensors and Security log authentication telemetry with foreground and Windows service entry points, a Rust Sigma worker, and a local dashboard for telemetry and detections. Remaining platform services are still planned.
 
 > ⚠️ **Authorised use only.** Deploy agents only on systems you own or have explicit written permission to monitor, and run all attack simulations in an isolated lab.
 
@@ -186,13 +186,13 @@ Agent responsibilities: collect → filter → enrich locally (hashes, lineage) 
 The gateway validates one JSON event against the current schema and publishes accepted events to the durable NATS JetStream stream. It serves a local read-only telemetry dashboard and loopback-only `GET /v1/events` API. Agent authentication, Protobuf/gRPC transport, normalisation, rate limiting and back-pressure remain planned.
 
 ### 3. Event bus
-NATS JetStream decouples ingestion from consumers. ClickHouse consumers read the durable event and alert streams and acknowledge messages after storage. The Rust Sigma worker reads the event stream and publishes matches to the durable alerts stream. UEBA is not connected yet. Kafka/Redpanda remains an alternative for a later deployment profile.
+NATS JetStream decouples ingestion from consumers. ClickHouse consumers read the durable event and alert streams and acknowledge messages after storage. The Rust Sigma worker reads the event stream and publishes matches to the durable alerts stream. The first Python UEBA scorer is an in-memory library and is not connected to the bus yet. Kafka/Redpanda remains an alternative for a later deployment profile.
 
 ### 4. Detection engine (Rust)
 The Rust worker loads Sigma YAML rules, consumes normalized events from JetStream, and publishes matches to `SENTINELFORGE_ALERTS`. The evaluator supports a documented Sigma subset: selection conditions, common field modifiers, logsource filters and rule metadata. The event-store consumer persists alerts in ClickHouse, and the local dashboard shows their rule, severity, host and event evidence. Native rules, threshold/sequence logic, ATT&CK mappings and hot reload remain planned.
 
 ### 5. UEBA service (Python)
-Builds per-user, per-host and per-process baselines (logon patterns, rare binaries, unusual parent-child pairs, rare destinations) and emits an **explainable anomaly score** with its top contributing features. It runs off the hot path and consumes the bus. *(scikit-learn, PyOD, River, SHAP)*
+The initial `ml/` package extracts process, file, network, authentication and time features and scores them against explainable per-host and per-user categorical baselines. The scorer is currently in-memory and not connected to the bus. Persistent baselines, per-process behavior, evaluation and stream integration remain planned.
 
 ### 6. Enrichment & scoring
 Adds indicator matches (hashes, IPs, domains), vulnerability context (CISA KEV, EPSS, NVD/OSV) and asset criticality, then computes a final prioritised alert score.
@@ -348,7 +348,7 @@ SentinelForge builds on proven projects instead of reinventing commodity layers.
 
 ## 📁 Repository Structure
 
-> The repository includes the initial gateway, event store, Linux sensor and Sigma evaluator slices. The remaining directories below describe planned components.
+> The repository includes the initial gateway, event store, Linux and Windows sensor slices, Sigma evaluator, and the first UEBA library. Other directories below describe planned components.
 
 ```
 SentinelForge/
@@ -362,7 +362,7 @@ SentinelForge/
 ├── control-plane/          # Go: enrolment, policy, response, updates, RBAC
 ├── detection/              # Rust: standalone Sigma parser and evaluator (subset)
 ├── correlation/            # attack-chain builder and timeline service
-├── ml/                     # Python: UEBA features, models, explainability
+├── ml/                     # Python: UEBA features and explainable baseline scorer
 ├── assistant/              # Python: agent, read-only tools, guardrails
 ├── rulelifecycle/          # generate, validate, replay, approve, version, roll back
 ├── dashboard/              # planned React analyst UI; local event view is embedded in gateway
@@ -478,9 +478,13 @@ An EDR is a high-value target, so its own security is a first-class requirement.
   - [x] Persist alerts in ClickHouse and show them in the dashboard
   - [ ] Build the React alert dashboard and investigation workflows
 - [ ] **M4** — Windows agent: ETW telemetry
-  - [x] Process-start, file create/delete and outbound TCP connect telemetry forwarded to gateway
-  - [ ] Authentication, file-write, UDP/inbound network telemetry plus endpoint service integration
+  - [x] Process-start, file create/delete/write, TCP/UDP network and logon telemetry forwarded to gateway
+  - [x] Windows service entry point, stop/shutdown handling and foreground lab mode
 - [ ] **M5** — UEBA baselines and explainable anomaly scoring
+  - [x] Python event feature extraction and in-memory per-host/per-user categorical baselines
+  - [x] Versioned JSON baseline save/load with atomic file replacement
+  - [ ] Trusted baseline ingestion, per-process profiles and evaluation
+  - [ ] Consume JetStream events and publish UEBA alerts
 - [ ] **M6** — Enrichment, ATT&CK mapping and attack-chain correlation
 - [ ] **M7** — AI assistant with read-only tools and citations
 - [ ] **M8** — Adaptive rule lifecycle, control plane, OPA response gates
