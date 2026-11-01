@@ -37,6 +37,7 @@ const FILE_DELETE_EVENT_ID: u16 = 35;
 const FILE_CLOSE_EVENT_ID: u16 = 66;
 const FILE_WRITE_EVENT_ID: u16 = 68;
 const FILE_OBJECT_PATH_CAPACITY: usize = 65_536;
+const PROCESS_PATH_CAPACITY: usize = 65_536;
 const TCP_CONNECT_IPV4_EVENT_ID: u16 = 12;
 const TCP_CONNECT_IPV6_EVENT_ID: u16 = 28;
 const TCP_ACCEPT_IPV4_EVENT_ID: u16 = 15;
@@ -92,6 +93,8 @@ where
     let file_event_sender = event_sender.clone();
     let file_paths = Arc::new(Mutex::new(HashMap::<u32, String>::new()));
     let callback_file_paths = file_paths.clone();
+    let process_paths = Arc::new(Mutex::new(HashMap::<u32, String>::new()));
+    let file_process_paths = process_paths.clone();
     let file_provider = Provider::kernel(&FILE_IO_PROVIDER)
         .add_callback(move |record, schema_locator| {
             file_callback(
@@ -99,21 +102,36 @@ where
                 schema_locator,
                 &file_event_sender,
                 &callback_file_paths,
+                &file_process_paths,
             )
         })
         .build();
     let network_event_sender = event_sender.clone();
+    let network_process_paths = process_paths.clone();
     let network_provider = Provider::kernel(&TCP_IP_PROVIDER)
         .add_callback(move |record, schema_locator| {
-            network_callback(record, schema_locator, &network_event_sender, "tcp")
+            network_callback(
+                record,
+                schema_locator,
+                &network_event_sender,
+                &network_process_paths,
+                "tcp",
+            )
         })
         .build();
     let udp_ip_provider =
         KernelProvider::new("bf3a50c5-a9c9-4988-a005-2df0b7c80f80".into(), 0x0001_0000);
     let udp_event_sender = event_sender.clone();
+    let udp_process_paths = process_paths.clone();
     let udp_provider = Provider::kernel(&udp_ip_provider)
         .add_callback(move |record, schema_locator| {
-            network_callback(record, schema_locator, &udp_event_sender, "udp")
+            network_callback(
+                record,
+                schema_locator,
+                &udp_event_sender,
+                &udp_process_paths,
+                "udp",
+            )
         })
         .build();
     let mut file_trace = match KernelTrace::new()
@@ -134,10 +152,16 @@ where
 
     // Kernel process starts need the Process keyword and an elevated trace session.
     let process_event_sender = event_sender.clone();
+    let process_event_paths = process_paths.clone();
     let provider = Provider::by_guid(KERNEL_PROCESS_PROVIDER)
         .any(PROCESS_KEYWORD)
         .add_callback(move |record, schema_locator| {
-            process_callback(record, schema_locator, &process_event_sender)
+            process_callback(
+                record,
+                schema_locator,
+                &process_event_sender,
+                &process_event_paths,
+            )
         })
         .build();
     let trace = UserTrace::new()
@@ -178,6 +202,7 @@ fn process_callback(
     record: &EventRecord,
     schema_locator: &SchemaLocator,
     event_sender: &SyncSender<String>,
+    process_paths: &Arc<Mutex<HashMap<u32, String>>>,
 ) {
     if record.event_id() != PROCESS_START_EVENT_ID {
         return;
@@ -198,6 +223,14 @@ fn process_callback(
     else {
         return;
     };
+    if let Ok(mut paths) = process_paths.lock() {
+        if !paths.contains_key(&pid) && paths.len() >= PROCESS_PATH_CAPACITY {
+            if let Some(oldest_pid) = paths.keys().next().copied() {
+                paths.remove(&oldest_pid);
+            }
+        }
+        paths.insert(pid, path.clone());
+    }
 
     let command_line = parser
         .try_parse::<String>("CommandLine")
@@ -212,6 +245,7 @@ fn process_callback(
         .map(|pid| ProcessReference {
             pid: u64::from(pid),
             name: String::new(),
+            path: String::new(),
         });
 
     let Some(timestamp) = wall_clock_timestamp() else {
@@ -255,6 +289,7 @@ fn file_callback(
     schema_locator: &SchemaLocator,
     event_sender: &SyncSender<String>,
     file_paths: &Arc<Mutex<HashMap<u32, String>>>,
+    process_paths: &Arc<Mutex<HashMap<u32, String>>>,
 ) {
     let event_id = record.event_id();
     let Ok(schema) = schema_locator.event_schema(record) else {
@@ -333,6 +368,7 @@ fn file_callback(
             size_bytes: None,
             flags: 0,
             bytes_written,
+            process: process_reference(record.process_id(), process_paths),
         },
         raw: RawSource {
             source: "ETW".into(),
@@ -360,6 +396,7 @@ fn network_callback(
     record: &EventRecord,
     schema_locator: &SchemaLocator,
     event_sender: &SyncSender<String>,
+    process_paths: &Arc<Mutex<HashMap<u32, String>>>,
     protocol: &str,
 ) {
     let (action, direction, provider) = match (protocol, record.event_id()) {
@@ -389,6 +426,15 @@ fn network_callback(
     ) else {
         return;
     };
+    let process_id = if protocol == "udp" {
+        parser
+            .try_parse::<u32>("context")
+            .unwrap_or_else(|_| record.process_id())
+    } else {
+        parser
+            .try_parse::<u32>("PID")
+            .unwrap_or_else(|_| record.process_id())
+    };
     let (local_address, remote_address, local_port, remote_port) = if direction == "inbound" {
         (remote_address, local_address, remote_port, local_port)
     } else {
@@ -416,6 +462,7 @@ fn network_callback(
             local_port: u32::from(local_port),
             remote_address: remote_address.to_string(),
             remote_port: u32::from(remote_port),
+            process: process_reference(process_id, process_paths),
         },
         raw: RawSource {
             source: "ETW".into(),
@@ -437,6 +484,26 @@ fn network_callback(
         },
         Err(error) => eprintln!("could not serialize ETW network event: {error}"),
     }
+}
+
+fn process_reference(
+    process_id: u32,
+    process_paths: &Arc<Mutex<HashMap<u32, String>>>,
+) -> Option<ProcessReference> {
+    if process_id == 0 {
+        return None;
+    }
+    let path = process_paths.lock().ok()?.get(&process_id)?.clone();
+    let name = path
+        .rsplit(['\\', '/'])
+        .next()
+        .filter(|name| !name.is_empty())?
+        .to_owned();
+    Some(ProcessReference {
+        pid: u64::from(process_id),
+        name,
+        path,
+    })
 }
 
 fn publish_events(receiver: Receiver<String>, gateway: GatewayClient) {

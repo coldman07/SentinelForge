@@ -7,7 +7,11 @@ name = "sentinelforge-ueba"
 version = "0.1.0"
 description = "Explainable online categorical baselines for SentinelForge telemetry"
 requires-python = ">=3.11"
-dependencies = []
+dependencies = ["nats-py>=2.16,<3"]
+
+[project.scripts]
+sentinelforge-ueba = "sentinelforge_ueba.worker:main"
+sentinelforge-ueba-evaluate = "sentinelforge_ueba.evaluate:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

@@ -46,6 +46,8 @@ pub struct ProcessReference {
     pub pid: u64,
     #[serde(skip_serializing_if = "String::is_empty")]
     pub name: String,
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub path: String,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -91,6 +93,8 @@ pub struct FileDetails {
     pub flags: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub bytes_written: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process: Option<ProcessReference>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -119,6 +123,8 @@ pub struct NetworkDetails {
     pub local_port: u32,
     pub remote_address: String,
     pub remote_port: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub process: Option<ProcessReference>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -257,6 +263,7 @@ impl FileEvent {
                 size_bytes: None,
                 flags,
                 bytes_written: (bytes_written > 0).then_some(bytes_written),
+                process: None,
             },
             raw: RawSource {
                 source: "eBPF".into(),
@@ -316,6 +323,7 @@ impl NetworkConnect {
                 local_port: 0,
                 remote_address: remote_address.into(),
                 remote_port: u32::from(remote_port),
+                process: None,
             },
             raw: RawSource {
                 source: "eBPF".into(),
@@ -531,6 +539,7 @@ mod tests {
                 parent: Some(ProcessReference {
                     pid: 2210,
                     name: "terminal".into(),
+                    path: String::new(),
                 }),
             },
             raw: RawSource {

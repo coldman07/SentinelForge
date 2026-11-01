@@ -18,7 +18,7 @@
 
 ---
 
-> 🚧 **Project status: early development.** The first implementation slices are in place: the Protobuf event contract, Go ingestion gateway, NATS JetStream bus, ClickHouse event and alert store, Linux eBPF process/file/network sensors, Windows ETW process/file/TCP/UDP sensors and Security log authentication telemetry with foreground and Windows service entry points, a Rust Sigma worker, and a local dashboard for telemetry and detections. Remaining platform services are still planned.
+> 🚧 **Project status: early development.** The first implementation slices are in place: the Protobuf event contract, Go ingestion gateway, NATS JetStream bus, ClickHouse event and alert store, Linux eBPF process/file/network sensors, Windows ETW process/file/TCP/UDP sensors and Security log authentication telemetry with foreground and Windows service entry points, Rust Sigma and Python UEBA workers, and a local dashboard for telemetry and detections. Remaining platform services are still planned.
 
 > ⚠️ **Authorised use only.** Deploy agents only on systems you own or have explicit written permission to monitor, and run all attack simulations in an isolated lab.
 
@@ -169,16 +169,16 @@ flowchart LR
 ### 1. Endpoint agent (Rust)
 A small, privileged, self-protecting sensor.
 
-**Implemented slices:** the Linux Rust loader and eBPF programs emit process, file and network events in the shared JSON shape. The initial Windows Rust sensor reads process-start events from `Microsoft-Windows-Kernel-Process`, file create/delete events from the kernel File I/O provider, and outbound IPv4/IPv6 TCP connections from the kernel TCP/IP provider, then POSTs them to the gateway. Windows collection requires an elevated session; file paths may use device names. Authentication, file writes, UDP/inbound network, service and persistence events, and the local queue/governor remain planned.
+**Implemented slices:** the Linux Rust loader and eBPF programs emit process, file and network events in the shared JSON shape, including process identity when `/proc` resolves it. The Windows Rust sensor reads process starts, file create/delete/write events, outbound TCP connects, accepted TCP connections, UDP sends/receives, and successful/failed logons, then POSTs them to the gateway. It includes process context when ETW supplies a PID already observed by the process sensor. It can run in foreground lab mode or as a Windows service. Kernel trace collection requires an elevated service account; file paths may use device names.
 
 | Category | Windows | Linux |
 |---|---|---|
 | **Process** | ETW `Microsoft-Windows-Kernel-Process` (process start → gateway) | eBPF (`execve`, `exit`, fork lineage) |
-| **Authentication** | Security log (4624/4625/4648/4672) via ETW/EvtSubscribe | journald (sshd, sudo, PAM), auth logs |
-| **File** | Kernel File I/O ETW (create/delete); minifilter (optional) | eBPF / fanotify on selected paths |
+| **Authentication** | Security log (4624/4625) via Windows Event Log subscription | journald (sshd, sudo, PAM), auth logs |
+| **File** | Kernel File I/O ETW (create/delete/write); minifilter (optional) | eBPF / fanotify on selected paths |
 | **Service** | Service install/start events (7045, SCM) | systemd unit events |
 | **Persistence** | Run keys, scheduled tasks, services, WMI | cron, systemd units, shell profiles, `authorized_keys` |
-| **Network** | Kernel TCP/IP ETW (outbound TCP connect) | eBPF socket tracing (connect/accept/DNS) |
+| **Network** | Kernel TCP/IP and UDP/IP ETW (TCP connect/accept, UDP send/receive) | eBPF socket tracing (connect/accept/DNS) |
 
 Agent responsibilities: collect → filter → enrich locally (hashes, lineage) → queue on disk → ship over mTLS. A **resource governor** caps CPU/RAM/IO, and a **local queue** survives network loss.
 
@@ -186,13 +186,13 @@ Agent responsibilities: collect → filter → enrich locally (hashes, lineage) 
 The gateway validates one JSON event against the current schema and publishes accepted events to the durable NATS JetStream stream. It serves a local read-only telemetry dashboard and loopback-only `GET /v1/events` API. Agent authentication, Protobuf/gRPC transport, normalisation, rate limiting and back-pressure remain planned.
 
 ### 3. Event bus
-NATS JetStream decouples ingestion from consumers. ClickHouse consumers read the durable event and alert streams and acknowledge messages after storage. The Rust Sigma worker reads the event stream and publishes matches to the durable alerts stream. The first Python UEBA scorer is an in-memory library and is not connected to the bus yet. Kafka/Redpanda remains an alternative for a later deployment profile.
+NATS JetStream decouples ingestion from consumers. ClickHouse consumers read the durable event and alert streams and acknowledge messages after storage. The Rust Sigma worker and Python UEBA worker consume durable event streams and publish evidence-linked matches to the durable alerts stream. Kafka/Redpanda remains an alternative for a later deployment profile.
 
 ### 4. Detection engine (Rust)
 The Rust worker loads Sigma YAML rules, consumes normalized events from JetStream, and publishes matches to `SENTINELFORGE_ALERTS`. The evaluator supports a documented Sigma subset: selection conditions, common field modifiers, logsource filters and rule metadata. The event-store consumer persists alerts in ClickHouse, and the local dashboard shows their rule, severity, host and event evidence. Native rules, threshold/sequence logic, ATT&CK mappings and hot reload remain planned.
 
 ### 5. UEBA service (Python)
-The initial `ml/` package extracts process, file, network, authentication and time features and scores them against explainable per-host and per-user categorical baselines. The scorer is currently in-memory and not connected to the bus. Persistent baselines, per-process behavior, evaluation and stream integration remain planned.
+The `ml/` package extracts process, file, network, authentication and time features and scores them against explainable per-host, per-user and per-image baselines. It persists trusted baselines, reports offline classification metrics for labeled samples, and has a durable JetStream worker that publishes evidence-linked alerts. File and network process correlation is limited by the current event schema, and the included labeled data is synthetic demo material.
 
 ### 6. Enrichment & scoring
 Adds indicator matches (hashes, IPs, domains), vulnerability context (CISA KEV, EPSS, NVD/OSV) and asset criticality, then computes a final prioritised alert score.
@@ -348,7 +348,7 @@ SentinelForge builds on proven projects instead of reinventing commodity layers.
 
 ## 📁 Repository Structure
 
-> The repository includes the initial gateway, event store, Linux and Windows sensor slices, Sigma evaluator, and the first UEBA library. Other directories below describe planned components.
+> The repository includes the gateway, event store, Linux and Windows sensor slices, Sigma evaluator, and initial UEBA library and worker. Other directories below describe planned components.
 
 ```
 SentinelForge/
@@ -383,8 +383,8 @@ SentinelForge/
 git clone https://github.com/coldman07/SentinelForge.git
 cd SentinelForge
 
-# Start the local event bus and event store
-docker compose -f deploy/docker-compose.yml up -d nats clickhouse
+# Start the local event bus, event store, and UEBA worker
+docker compose -f deploy/docker-compose.yml up -d nats clickhouse ueba
 
 # Terminal 1, from the repository root: start the gateway
 cd gateway
@@ -408,13 +408,21 @@ cargo run --manifest-path detection/Cargo.toml
 
 The worker loads `.yml` and `.yaml` rules recursively from `rules/sigma`. Set `SF_RULES_DIR` to use another directory. Matching events are published to the durable `SENTINELFORGE_ALERTS` stream.
 
+The Python UEBA worker starts with the Compose stack. It creates a durable
+consumer on `SENTINELFORGE_EVENTS`, stores its baseline in the `ueba-data`
+volume, and publishes anomalous events to the same alert stream. Without a
+pre-seeded baseline it learns from the stream during the configured warm-up;
+for real environments, seed it with a trusted JSONL baseline using
+`SF_UEBA_BASELINE_SEED` before startup. The included demo data is synthetic and
+only intended to illustrate the offline evaluator.
+
 Linux sensor build and run details are in [`agent/sensors-linux/README.md`](agent/sensors-linux/README.md). Unified agent enrollment and service installation are not implemented yet.
 
 **Recommended lab setup:** an isolated network with one Linux and one Windows VM as endpoints, plus a host with at least 8 GB RAM for the server stack.
 
 ## ⚙️ Configuration
 
-The local gateway, event store and detection worker read these development settings:
+The local gateway, event store, detection worker and UEBA worker read these development settings:
 
 | Variable | Description | Example |
 |---|---|---|
@@ -425,6 +433,13 @@ The local gateway, event store and detection worker read these development setti
 | `SF_CLICKHOUSE_PASSWORD` | ClickHouse password (optional for local default setup) | *(empty)* |
 | `SF_RULES_DIR` | Directory containing Sigma YAML rules | `rules/sigma` |
 | `SF_GATEWAY_URL` | Windows sensor event-ingest endpoint | `http://127.0.0.1:8080/v1/events` |
+| `SF_UEBA_BASELINE_PATH` | UEBA baseline JSON file | `data/ueba-baseline.json` |
+| `SF_UEBA_BASELINE_SEED` | Trusted newline-delimited events used when no saved baseline exists | *(unset)* |
+| `SF_UEBA_WARMUP_OBSERVATIONS` | Per-host events required before anomaly alerts | `25` |
+| `SF_UEBA_ANOMALY_THRESHOLD` | Alert score threshold from 0 to 100 | `65` |
+| `SF_UEBA_DURABLE_NAME` | JetStream consumer name | `SENTINELFORGE_UEBA` |
+| `SF_UEBA_CHECKPOINT_SIZE` | Events persisted before their JetStream acknowledgements | `32` |
+| `SF_UEBA_MAX_ENTITY_SCOPES` | Maximum persisted user and process profiles | `10000` |
 
 Database, assistant, response-mode and agent-governor settings remain planned.
 
@@ -477,14 +492,16 @@ An EDR is a high-value target, so its own security is a first-class requirement.
   - [x] Connect detection evaluation to JetStream and publish matches to the durable alerts stream
   - [x] Persist alerts in ClickHouse and show them in the dashboard
   - [ ] Build the React alert dashboard and investigation workflows
-- [ ] **M4** — Windows agent: ETW telemetry
+- [x] **M4** — Windows agent: ETW telemetry
   - [x] Process-start, file create/delete/write, TCP/UDP network and logon telemetry forwarded to gateway
   - [x] Windows service entry point, stop/shutdown handling and foreground lab mode
-- [ ] **M5** — UEBA baselines and explainable anomaly scoring
-  - [x] Python event feature extraction and in-memory per-host/per-user categorical baselines
+- [x] **M5** — UEBA baselines and explainable anomaly scoring
+  - [x] Python event feature extraction and in-memory per-host/per-user/per-image categorical baselines
   - [x] Versioned JSON baseline save/load with atomic file replacement
-  - [ ] Trusted baseline ingestion, per-process profiles and evaluation
-  - [ ] Consume JetStream events and publish UEBA alerts
+  - [x] Bounded per-image launch-time, parent-image, file-action and network-destination profiles
+  - [x] Offline labeled-event metrics: precision, recall, false-positive rate and readiness coverage
+  - [x] Synthetic labeled demo baseline/scenario dataset and offline evaluation CLI
+  - [x] Durable JetStream event consumer with evidence-linked UEBA alert publishing
 - [ ] **M6** — Enrichment, ATT&CK mapping and attack-chain correlation
 - [ ] **M7** — AI assistant with read-only tools and citations
 - [ ] **M8** — Adaptive rule lifecycle, control plane, OPA response gates

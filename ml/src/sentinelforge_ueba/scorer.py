@@ -72,6 +72,7 @@ class BaselineScorer:
         warmup_observations: int = 25,
         anomaly_threshold: float = 65.0,
         max_values_per_feature: int = 2048,
+        max_entity_scopes: int = 10_000,
         explanation_limit: int = 5,
     ) -> None:
         if warmup_observations < 1:
@@ -80,21 +81,29 @@ class BaselineScorer:
             raise ValueError("anomaly_threshold must be between 0 and 100")
         if max_values_per_feature < 2:
             raise ValueError("max_values_per_feature must be at least 2")
+        if max_entity_scopes < 1:
+            raise ValueError("max_entity_scopes must be at least 1")
         if explanation_limit < 1:
             raise ValueError("explanation_limit must be at least 1")
 
         self.warmup_observations = warmup_observations
         self.anomaly_threshold = anomaly_threshold
         self.max_values_per_feature = max_values_per_feature
+        self.max_entity_scopes = max_entity_scopes
         self.explanation_limit = explanation_limit
         self._counts: dict[tuple[str, str], Counter[str]] = {}
         self._feature_observation_counts: Counter[tuple[str, str]] = Counter()
         self._observation_counts: Counter[str] = Counter()
+        self._entity_scope_count = 0
 
     def learn_event(self, event: Mapping[str, Any]) -> None:
         """Add a trusted event to its host and user baselines."""
         features = _extract_features(event)
         for scope, values in features.items():
+            if scope not in self._observation_counts and scope.startswith(("user:", "process:")):
+                if self._entity_scope_count >= self.max_entity_scopes:
+                    continue
+                self._entity_scope_count += 1
             self._observation_counts[scope] += 1
             for feature, value in values.items():
                 feature_key = (scope, feature)
@@ -188,6 +197,7 @@ class BaselineScorer:
                 "warmup_observations": self.warmup_observations,
                 "anomaly_threshold": self.anomaly_threshold,
                 "max_values_per_feature": self.max_values_per_feature,
+                "max_entity_scopes": self.max_entity_scopes,
                 "explanation_limit": self.explanation_limit,
             },
             "observation_counts": dict(self._observation_counts),
@@ -245,13 +255,20 @@ class BaselineScorer:
             warmup_observations=_positive_int(config.get("warmup_observations")),
             anomaly_threshold=_threshold(config.get("anomaly_threshold")),
             max_values_per_feature=_positive_int(config.get("max_values_per_feature"), minimum=2),
+            max_entity_scopes=_positive_int(config.get("max_entity_scopes", 10_000)),
             explanation_limit=_positive_int(config.get("explanation_limit")),
         )
 
         for scope, count in observations.items():
-            if not isinstance(scope, str) or not scope or not _nonnegative_int(count):
+            if not isinstance(scope, str) or not scope or not _positive_int(count):
                 raise ValueError("invalid scope observation count in UEBA baseline")
             scorer._observation_counts[scope] = count
+        scorer._entity_scope_count = sum(
+            scope.startswith(("user:", "process:"))
+            for scope in scorer._observation_counts
+        )
+        if scorer._entity_scope_count > scorer.max_entity_scopes:
+            raise ValueError("UEBA baseline exceeds max_entity_scopes")
 
         for item in features:
             if not isinstance(item, dict):
@@ -302,6 +319,9 @@ def _extract_features(event: Mapping[str, Any]) -> dict[str, dict[str, str]]:
         "event.action": f"{category}:{_string(event.get('action')).casefold() or 'unknown'}",
     }
     user_features: dict[str, str] = {}
+    process_features: dict[str, str] = {}
+    image = ""
+    hour = _utc_hour(_string(event.get("timestamp")))
 
     user = event.get("user")
     username = _string(user.get("name")) if isinstance(user, Mapping) else ""
@@ -311,6 +331,15 @@ def _extract_features(event: Mapping[str, Any]) -> dict[str, dict[str, str]]:
         if image:
             host_features["process.image"] = image
             user_features["process.image"] = image
+            if hour is not None:
+                process_features["process.utc_hour"] = f"{hour:02d}"
+            parent = details.get("parent")
+            if isinstance(parent, Mapping):
+                parent_image = _normalise_path(_string(parent.get("name")))
+                if parent_image:
+                    process_features["process.parent_image"] = parent_image
+            if username:
+                process_features["process.user"] = username.casefold()
         parent = details.get("parent")
         if isinstance(parent, Mapping):
             parent_name = _string(parent.get("name")) or f"pid:{_string(parent.get('pid'))}"
@@ -325,6 +354,12 @@ def _extract_features(event: Mapping[str, Any]) -> dict[str, dict[str, str]]:
         extension = basename.rsplit(".", 1)[-1].casefold() if "." in basename else "none"
         host_features["file.action"] = _string(event.get("action")).casefold() or "unknown"
         host_features["file.extension"] = extension
+        process = details.get("process")
+        if isinstance(process, Mapping):
+            image = _normalise_path(_string(process.get("path")) or _string(process.get("name")))
+            if image:
+                process_features["file.action"] = host_features["file.action"]
+                process_features["file.extension"] = extension
     elif category == "network":
         protocol = _string(details.get("protocol")).casefold() or "unknown"
         remote_address = _string(details.get("remote_address")).casefold()
@@ -334,6 +369,14 @@ def _extract_features(event: Mapping[str, Any]) -> dict[str, dict[str, str]]:
             user_features["network.destination"] = remote_address
         if remote_port:
             host_features["network.destination_port"] = f"{protocol}:{remote_port}"
+        process = details.get("process")
+        if isinstance(process, Mapping):
+            image = _normalise_path(_string(process.get("path")) or _string(process.get("name")))
+            if image:
+                if remote_address:
+                    process_features["network.destination"] = remote_address
+                if remote_port:
+                    process_features["network.destination_port"] = f"{protocol}:{remote_port}"
     elif category == "authentication":
         username = username or _string(details.get("target"))
         method = _string(details.get("method")).casefold()
@@ -349,12 +392,13 @@ def _extract_features(event: Mapping[str, Any]) -> dict[str, dict[str, str]]:
             host_features["authentication.outcome"] = outcome
             user_features["authentication.outcome"] = outcome
 
-    hour = _utc_hour(_string(event.get("timestamp")))
     if hour is not None:
         host_features["time.utc_hour"] = f"{hour:02d}"
         user_features["time.utc_hour"] = f"{hour:02d}"
 
     features = {f"host:{host_id.casefold()}": host_features}
+    if image and process_features:
+        features[f"process:{image}"] = process_features
     if username:
         features[f"user:{username.casefold()}"] = user_features or host_features.copy()
     return features
@@ -386,10 +430,6 @@ def _positive_int(value: Any, *, minimum: int = 1) -> int:
     if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
         raise ValueError("baseline configuration and counters must be valid integers")
     return value
-
-
-def _nonnegative_int(value: Any) -> bool:
-    return isinstance(value, int) and not isinstance(value, bool) and value >= 0
 
 
 def _threshold(value: Any) -> float:

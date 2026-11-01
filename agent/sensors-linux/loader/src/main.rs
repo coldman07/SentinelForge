@@ -9,8 +9,8 @@ use std::{
 use anyhow::Context;
 use aya::{Ebpf, maps::RingBuf, programs::TracePoint};
 use sentinelforge_agent_core::{
-    FileEvent, Host, NetworkConnect, ProcessStart, User, format_ip_address, format_timestamp,
-    uuid_v4_from_random,
+    FileEvent, Host, NetworkConnect, ProcessReference, ProcessStart, User, format_ip_address,
+    format_timestamp, uuid_v4_from_random,
 };
 use sentinelforge_process_common::{FileOperationEvent, NetworkConnectEvent, ProcessExecEvent};
 
@@ -278,7 +278,7 @@ fn main() -> anyhow::Result<()> {
             let (seconds, nanoseconds) = wall_clock()?;
             let timestamp =
                 format_timestamp(seconds, nanoseconds).context("format file event timestamp")?;
-            let file_event = FileEvent::from_observation(
+            let mut file_event = FileEvent::from_observation(
                 event_id()?,
                 timestamp,
                 host.clone(),
@@ -293,6 +293,7 @@ fn main() -> anyhow::Result<()> {
                     None
                 },
             );
+            file_event.file.process = process_reference(observation.pid);
             file_event.validate().context("validate file event")?;
             println!("{}", file_event.to_json()?);
         }
@@ -316,7 +317,7 @@ fn main() -> anyhow::Result<()> {
             let (seconds, nanoseconds) = wall_clock()?;
             let timestamp =
                 format_timestamp(seconds, nanoseconds).context("format network event timestamp")?;
-            let network_event = NetworkConnect::from_connect_observation(
+            let mut network_event = NetworkConnect::from_connect_observation(
                 event_id()?,
                 timestamp,
                 host.clone(),
@@ -324,6 +325,7 @@ fn main() -> anyhow::Result<()> {
                 &remote_address,
                 remote_port,
             );
+            network_event.network.process = process_reference(observation.pid);
             network_event.validate().context("validate network event")?;
             println!("{}", network_event.to_json()?);
         }
@@ -456,6 +458,21 @@ fn remote_endpoint(event: &NetworkConnectEvent) -> Option<(String, u16)> {
     let port = u16::from_be_bytes(event.port_be);
     let address = format_ip_address(event.family, event.address)?;
     Some((address, port))
+}
+
+fn process_reference(pid: u32) -> Option<ProcessReference> {
+    let path = std::fs::read_link(format!("/proc/{pid}/exe")).ok()?;
+    let path = path.to_string_lossy().into_owned();
+    let name = path
+        .rsplit(['/', '\\'])
+        .next()
+        .filter(|name| !name.is_empty())?
+        .to_owned();
+    Some(ProcessReference {
+        pid: u64::from(pid),
+        name,
+        path,
+    })
 }
 
 fn user_for_uid(uid: u32, cache: &mut HashMap<u32, Option<User>>) -> Option<User> {

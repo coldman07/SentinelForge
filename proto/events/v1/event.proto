@@ -72,9 +72,12 @@ message ProcessEvent {
   ProcessReference parent = 6;
 }
 
+// Process identity associated with a parent or a file/network operation.
+// Sensors may omit it when they cannot resolve the event's process ID.
 message ProcessReference {
   uint64 pid = 1;
   string name = 2;
+  string path = 3;
 }
 
 message Hash {
@@ -95,6 +98,8 @@ message FileEvent {
   uint64 size_bytes = 4;
   uint32 flags = 5;
   uint64 bytes_written = 6;
+  // Best-effort process attribution for the file operation.
+  ProcessReference process = 7;
 }
 
 message ServiceEvent {
@@ -118,4 +123,6 @@ message NetworkEvent {
   uint32 local_port = 4;
   string remote_address = 5;
   uint32 remote_port = 6;
+  // Best-effort process attribution for the network operation.
+  ProcessReference process = 7;
 }

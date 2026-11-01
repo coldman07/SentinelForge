@@ -23,6 +23,23 @@ services:
       retries: 20
     restart: unless-stopped
 
+  ueba:
+    build:
+      context: ..
+      dockerfile: ml/Dockerfile
+    depends_on:
+      - nats
+    environment:
+      SF_NATS_URL: nats://nats:4222
+      SF_UEBA_BASELINE_PATH: /data/ueba-baseline.json
+      SF_UEBA_DURABLE_NAME: SENTINELFORGE_UEBA
+      SF_UEBA_WARMUP_OBSERVATIONS: "25"
+      SF_UEBA_ANOMALY_THRESHOLD: "65"
+    volumes:
+      - ueba-data:/data
+    restart: unless-stopped
+
 volumes:
   nats-data:
   clickhouse-data:
+  ueba-data:

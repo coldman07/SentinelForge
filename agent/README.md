@@ -17,9 +17,11 @@ available, and parent PID. File events include the path as reported by ETW,
 which may use a Windows device path rather than a drive letter. The ETW
 sessions require an elevated Windows terminal. The sensor also reports
 outbound TCP connects, accepted TCP connections, and UDP sends/receives with
-local and remote addresses/ports for IPv4 and IPv6. File writes include the
-ETW-reported byte count and are linked to paths through a bounded file-object
-cache. The sensor also subscribes to Security log events 4624 and 4625 for
+local and remote addresses/ports for IPv4 and IPv6. File and network events
+include process identity when ETW provides a PID already observed by the
+process sensor. File writes include the ETW-reported byte count and are linked
+to paths through a bounded file-object cache. The sensor also subscribes to
+Security log events 4624 and 4625 for
 successful and failed logons; its service account must have permission to read
 that channel. Configure `SF_GATEWAY_URL` to point at the gateway; it defaults
 to `http://127.0.0.1:8080/v1/events`.
