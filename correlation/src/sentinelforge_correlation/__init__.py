@@ -3,6 +3,7 @@
 from .enrichment import EnrichmentEngine, EnrichedAlert
 from .attack import ATTACKMapper, Technique
 from .correlation import CorrelationEngine, Incident, AlertCluster
+from .feeds import FeedLoader
 
 __all__ = [
     "EnrichmentEngine",
@@ -12,4 +13,5 @@ __all__ = [
     "CorrelationEngine",
     "Incident",
     "AlertCluster",
+    "FeedLoader",
 ]

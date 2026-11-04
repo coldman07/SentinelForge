@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Iterable, Mapping
+
+from .attack import ATTACKMapper
 
 
 def _coerce_severity(value: Any) -> str:
@@ -35,6 +37,8 @@ class EnrichedAlert:
     indicator_matches: list[str] = field(default_factory=list)
     threat_intel: list[str] = field(default_factory=list)
     vulnerabilities: list[str] = field(default_factory=list)
+    vulnerability_context: list[dict[str, Any]] = field(default_factory=list)
+    techniques: list[dict[str, str]] = field(default_factory=list)
     tactics: list[str] = field(default_factory=list)
     evidence: dict[str, Any] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
@@ -50,6 +54,8 @@ class EnrichedAlert:
             "indicator_matches": list(self.indicator_matches),
             "threat_intel": list(self.threat_intel),
             "vulnerabilities": list(self.vulnerabilities),
+            "vulnerability_context": [dict(item) for item in self.vulnerability_context],
+            "techniques": [dict(item) for item in self.techniques],
             "tactics": list(self.tactics),
             "evidence": dict(self.evidence),
             "raw": dict(self.raw),
@@ -65,10 +71,12 @@ class EnrichmentEngine:
         kev: Mapping[str, dict[str, Any]] | None = None,
         epss: Mapping[str, float] | None = None,
         asset_criticality: Mapping[str, str] | None = None,
+        attack_mapper: ATTACKMapper | None = None,
     ) -> None:
         self.threat_intel = dict(threat_intel or {})
         self.kev = dict(kev or {})
         self.epss = dict(epss or {})
+        self.attack_mapper = attack_mapper or ATTACKMapper()
         self.asset_criticality = {
             "prod": "high",
             "production": "high",
@@ -131,23 +139,23 @@ class EnrichmentEngine:
         title = self._value_for_keys(alert, "title", "name", "rule_name")
         severity = _coerce_severity(self._value_for_keys(alert, "severity", "level", "priority"))
         asset_context = self._value_for_keys(alert, "asset_class", "asset", "host_role", "platform")
-        asset_criticality = self.asset_criticality.get(str(asset_context).lower(), "low") if asset_context else "low"
+        asset_criticality = self.asset_criticality.get(str(asset_context).strip().lower(), "low") if asset_context else "low"
 
         iocs = []
         threat_intel = []
+        intel_lookup = {key.casefold(): value for key, value in self.threat_intel.items()}
         for candidate in self._candidate_iocs(alert):
-            if candidate in self.threat_intel:
-                entry = self.threat_intel[candidate]
+            entry = intel_lookup.get(candidate.casefold())
+            if entry is not None:
                 iocs.append(candidate)
-                threat_intel.append(entry)
-            elif candidate.lower() in {key.lower() for key in self.threat_intel}:
-                key = next(key for key in self.threat_intel if key.lower() == candidate.lower())
-                iocs.append(candidate)
-                threat_intel.append(self.threat_intel[key])
+                threat_intel.append(str(entry))
 
         vulnerabilities: list[str] = []
         if "vulnerabilities" in alert:
-            for item in alert["vulnerabilities"] or []:
+            raw_vulnerabilities = alert["vulnerabilities"]
+            if isinstance(raw_vulnerabilities, (str, Mapping)):
+                raw_vulnerabilities = [raw_vulnerabilities]
+            for item in raw_vulnerabilities or []:
                 if isinstance(item, str):
                     vulnerabilities.append(item)
                 elif isinstance(item, Mapping):
@@ -157,19 +165,51 @@ class EnrichmentEngine:
         if "cve" in alert:
             vulnerabilities.append(str(alert["cve"]))
 
-        score = self._risk_weight(severity) + (len(iocs) * 10) + (len(vulnerabilities) * 7)
+        vulnerabilities = list(dict.fromkeys(vulnerabilities))
+        vulnerability_context: list[dict[str, Any]] = []
+        kev_lookup = {key.casefold(): value for key, value in self.kev.items()}
+        epss_lookup = {key.casefold(): value for key, value in self.epss.items()}
+        vulnerability_bonus = 0
+        for vuln_id in vulnerabilities:
+            kev_entry = kev_lookup.get(vuln_id.casefold())
+            epss_value = epss_lookup.get(vuln_id.casefold())
+            if epss_value is not None:
+                try:
+                    epss_value = min(1.0, max(0.0, float(epss_value)))
+                except (TypeError, ValueError):
+                    epss_value = None
+            is_kev = kev_entry is not None
+            if is_kev:
+                vulnerability_bonus += 20
+            if epss_value is not None:
+                vulnerability_bonus += round(epss_value * 10)
+            if is_kev or epss_value is not None:
+                context: dict[str, Any] = {"id": vuln_id, "in_kev": is_kev}
+                if isinstance(kev_entry, Mapping):
+                    context.update({k: v for k, v in kev_entry.items() if k not in {"id", "cveID"}})
+                if epss_value is not None:
+                    context["epss"] = epss_value
+                vulnerability_context.append(context)
+
+        score = self._risk_weight(severity) + (len(iocs) * 10) + (len(vulnerabilities) * 7) + vulnerability_bonus
         if asset_criticality in {"medium", "high", "critical"}:
             score += {"medium": 5, "high": 10, "critical": 15}[asset_criticality]
 
-        tactics = []
-        for key in ("tactics", "mitre_tactics", "attack_tactics", "techniques"):
-            if key in alert:
-                value = alert[key]
+        techniques = self.attack_mapper.map_alert(alert)
+        technique_metadata = [
+            {"id": item.id, "name": item.name, "tactic": item.tactic.value, "tactic_id": item.tactic_id}
+            for item in techniques
+        ]
+        tactics = list(dict.fromkeys(item.tactic.value for item in techniques))
+        # Preserve explicitly supplied tactic labels when no technique resolves.
+        if not tactics:
+            for key in ("tactics", "mitre_tactics", "attack_tactics"):
+                value = alert.get(key)
                 if isinstance(value, str):
                     tactics.append(value)
                 elif isinstance(value, Iterable):
-                    for item in value:
-                        tactics.append(str(item))
+                    tactics.extend(str(item) for item in value)
+        score = min(100, score)
 
         enriched = EnrichedAlert(
             alert_id=str(alert_id),
@@ -181,13 +221,17 @@ class EnrichmentEngine:
             indicator_matches=list(dict.fromkeys(iocs)),
             threat_intel=list(dict.fromkeys(threat_intel)),
             vulnerabilities=list(dict.fromkeys(vulnerabilities)),
+            vulnerability_context=vulnerability_context,
+            techniques=technique_metadata,
             tactics=list(dict.fromkeys(tactics)),
             evidence={
                 "severity": severity,
                 "asset_criticality": asset_criticality,
                 "indicator_matches": list(dict.fromkeys(iocs)),
                 "vulnerabilities": list(dict.fromkeys(vulnerabilities)),
-                "observed_at": datetime.utcnow().isoformat(timespec="seconds"),
+                "vulnerability_context": [dict(item) for item in vulnerability_context],
+                "techniques": [dict(item) for item in technique_metadata],
+                "observed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
             },
             raw=dict(alert),
         )

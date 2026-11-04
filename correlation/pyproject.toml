@@ -28,6 +28,7 @@ dev = [
 [project.scripts]
 sentinelforge-enrichment = "sentinelforge_correlation.enrichment_worker:main"
 sentinelforge-correlation = "sentinelforge_correlation.correlation_worker:main"
+sentinelforge-m6-worker = "sentinelforge_correlation.live_worker:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]

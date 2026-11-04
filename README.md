@@ -195,10 +195,10 @@ The Rust worker loads Sigma YAML rules, consumes normalized events from JetStrea
 The `ml/` package extracts process, file, network, authentication and time features and scores them against explainable per-host, per-user and per-image baselines. It persists trusted baselines, reports offline classification metrics for labeled samples, and has a durable JetStream worker that publishes evidence-linked alerts. File and network process correlation is limited by the current event schema, and the included labeled data is synthetic demo material.
 
 ### 6. Enrichment & scoring
-Adds indicator matches (hashes, IPs, domains), vulnerability context (CISA KEV, EPSS, NVD/OSV) and asset criticality, then computes a final prioritised alert score.
+The `correlation/` M6 worker consumes detection alerts from JetStream, adds indicator matches from configured JSON feeds, checks CVEs against CISA KEV and FIRST EPSS, resolves ATT&CK tags, and publishes enriched alert records to `SENTINELFORGE_ENRICHED`. Asset criticality can be configured with `SF_ASSET_CRITICALITY_JSON`.
 
 ### 7. Attack-chain correlation
-Links alerts and events by entity, process tree, time window and ATT&CK technique progression into one **evidence-linked incident timeline** (initial access → execution → persistence → credential access → lateral movement).
+The M6 worker maintains a bounded rolling alert window, groups alerts by shared entities and time, and publishes correlated incident snapshots to `SENTINELFORGE_INCIDENTS`. Snapshots include source alert evidence and resolved ATT&CK tactics and techniques. The current correlation links shared entities and time; process-tree progression remains limited by the alert data available to the worker.
 
 ### 8. Storage
 - **ClickHouse:** event and alert consumers persist searchable event fields and full JSON evidence in `sentinelforge.events` and `sentinelforge.alerts`. Loopback-only APIs supply recent records to the dashboard; broader query and hunting APIs remain planned.
@@ -209,7 +209,7 @@ Links alerts and events by entity, process tree, time window and ATT&CK techniqu
 Handles enrolment, configuration, signed agent/rule updates, response orchestration and RBAC. **Open Policy Agent (OPA)** evaluates approval policies as code.
 
 ### 10. Analyst dashboard (React + TypeScript)
-The current embedded development dashboard summarizes event volume and categories, lists searchable/filterable activity, and shows recent Sigma detections with severity, matching rule metadata and event evidence. It reads from loopback-only APIs. The React application, incident timelines, host and user views, hunting, rule management, approval queues and assistant chat remain planned.
+The current embedded development dashboard summarizes event volume and categories, lists searchable/filterable activity, and shows recent Sigma detections with severity, matching rule metadata and event evidence. It reads from loopback-only APIs. The standalone M7 assistant service can retrieve recent event and alert records, but the React application, incident timelines, host and user views, hunting, rule management, approval queues and integrated assistant chat remain planned.
 
 ## 📐 Event Schema
 
@@ -259,6 +259,12 @@ An **analyst co-pilot, not an autonomous operator.**
 - Explanations of why an alert fired (rule logic, anomaly features, intel matches).
 - Investigation summaries that **cite underlying event IDs**.
 - Candidate-rule proposals for human review.
+
+The first M7 slice is available in `assistant/`: a loopback HTTP service that
+retrieves bounded recent events and alerts, asks an OpenAI-compatible model to
+analyze that evidence, checks cited event IDs, and writes JSONL audit records.
+It has no write or response tools. Incident retrieval and dashboard integration
+remain in progress.
 
 **Guardrails**
 - **Read-only tools** by default, exposed through a narrow API (MCP-style).
@@ -440,8 +446,13 @@ The local gateway, event store, detection worker and UEBA worker read these deve
 | `SF_UEBA_DURABLE_NAME` | JetStream consumer name | `SENTINELFORGE_UEBA` |
 | `SF_UEBA_CHECKPOINT_SIZE` | Events persisted before their JetStream acknowledgements | `32` |
 | `SF_UEBA_MAX_ENTITY_SCOPES` | Maximum persisted user and process profiles | `10000` |
+| `SF_KEV_ENABLED` / `SF_KEV_URL` | Toggle or override the CISA KEV feed used by M6 | `true` / CISA JSON feed |
+| `SF_EPSS_URL` | FIRST EPSS API endpoint used for CVEs on incoming alerts | `https://api.first.org/data/v1/epss` |
+| `SF_THREAT_INTEL_URLS` | Comma-separated JSON IOC feed URLs | *(unset)* |
+| `SF_ASSET_CRITICALITY_JSON` | JSON map of asset labels to criticality values | *(unset)* |
+| `SF_CORRELATION_WINDOW_SECONDS` | Rolling M6 incident window | `21600` |
 
-Database, assistant, response-mode and agent-governor settings remain planned.
+Response-mode and agent-governor settings remain planned. Assistant settings are documented in `assistant/README.md`.
 
 **Never commit secrets.** Use environment files excluded via `.gitignore`.
 
@@ -503,10 +514,15 @@ An EDR is a high-value target, so its own security is a first-class requirement.
   - [x] Synthetic labeled demo baseline/scenario dataset and offline evaluation CLI
   - [x] Durable JetStream event consumer with evidence-linked UEBA alert publishing
 - [x] **M6** — Enrichment, ATT&CK mapping and attack-chain correlation
-  - [x] Threat-intel, asset and vulnerability enrichment
+  - [x] Live JetStream enrichment and incident snapshot workers
+  - [x] Configurable JSON IOC feeds, CISA KEV, and FIRST EPSS lookups
   - [x] MITRE ATT&CK technique resolution and tactic mapping
-  - [x] Alert clustering and incident generation for attack chains
+  - [x] Bounded alert clustering and incident publication to JetStream
 - [ ] **M7** — AI assistant with read-only tools and citations
+  - [x] Read-only retrieval of recent events and alerts through gateway GET APIs
+  - [x] Alert explanation workflow for stored rule/anomaly evidence
+  - [x] Evidence-bound model answers with checked event-ID citations and JSONL audit
+  - [ ] Incident retrieval, explain-alert workflow, and dashboard chat integration
 - [ ] **M8** — Adaptive rule lifecycle, control plane, OPA response gates
 - [ ] **M9** — Hardening: mTLS everywhere, signed updates, self-protection, Windows driver
 - [ ] **M10** — Benchmarks, documentation, first public release

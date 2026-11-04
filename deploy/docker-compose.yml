@@ -39,6 +39,22 @@ services:
       - ueba-data:/data
     restart: unless-stopped
 
+  enrichment-correlation:
+    build:
+      context: ..
+      dockerfile: correlation/Dockerfile
+    depends_on:
+      - nats
+    environment:
+      SF_NATS_URL: nats://nats:4222
+      SF_KEV_ENABLED: ${SF_KEV_ENABLED:-true}
+      SF_KEV_URL: ${SF_KEV_URL:-https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json}
+      SF_EPSS_URL: ${SF_EPSS_URL:-https://api.first.org/data/v1/epss}
+      SF_THREAT_INTEL_URLS: ${SF_THREAT_INTEL_URLS:-}
+      SF_ASSET_CRITICALITY_JSON: ${SF_ASSET_CRITICALITY_JSON:-}
+      SF_CORRELATION_WINDOW_SECONDS: ${SF_CORRELATION_WINDOW_SECONDS:-21600}
+    restart: unless-stopped
+
 volumes:
   nats-data:
   clickhouse-data:

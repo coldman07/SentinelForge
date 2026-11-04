@@ -16,6 +16,9 @@ def _normalize_reference(value: Any) -> str:
 
     normalized = text.lower()
     for prefix in (
+        "mitre_attack.",
+        "mitre.",
+        "attack.",
         "mitre attack:",
         "mitre-attack:",
         "mitre:",

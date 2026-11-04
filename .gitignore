@@ -1,0 +1,12 @@
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Python runtime artifacts and local investigation data
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+data/
+*.log

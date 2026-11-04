@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import Any, Iterable, Mapping
 
 
@@ -29,6 +29,7 @@ class AlertCluster:
     alerts: list[dict[str, Any]] = field(default_factory=list)
     entities: set[str] = field(default_factory=set)
     tactics: list[str] = field(default_factory=list)
+    techniques: list[str] = field(default_factory=list)
     first_seen: datetime | None = None
     last_seen: datetime | None = None
     score: float = 0.0
@@ -39,11 +40,22 @@ class AlertCluster:
         for key in ("host", "hostname", "user", "username", "source_ip", "destination_ip", "process_name", "image"):
             value = alert_dict.get(key)
             if value not in (None, ""):
-                self.entities.add(str(value))
+                self.entities.add(str(value).strip().casefold())
         tactic_values = _flatten_strings(alert_dict.get("tactics"))
-        tactic_values.extend(_flatten_strings(alert_dict.get("techniques")))
+        raw_techniques = alert_dict.get("techniques") or []
+        if isinstance(raw_techniques, (str, Mapping)):
+            raw_techniques = [raw_techniques]
+        for item in raw_techniques:
+            if isinstance(item, Mapping):
+                if item.get("tactic"):
+                    tactic_values.append(str(item["tactic"]))
+                if item.get("id"):
+                    self.techniques.append(str(item["id"]))
+            else:
+                self.techniques.extend(_flatten_strings(item))
         self.tactics.extend(item for item in tactic_values if item not in (None, ""))
         self.tactics = list(dict.fromkeys(self.tactics))
+        self.techniques = list(dict.fromkeys(self.techniques))
 
         event_time = _parse_time(alert_dict.get("timestamp") or alert_dict.get("occurred_at") or alert_dict.get("time"))
         if event_time is not None:
@@ -59,6 +71,7 @@ class AlertCluster:
             "alert_count": len(self.alerts),
             "entities": sorted(self.entities),
             "tactics": list(self.tactics),
+            "techniques": list(self.techniques),
             "first_seen": self.first_seen.isoformat() if self.first_seen else None,
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
             "score": self.score,
@@ -74,6 +87,7 @@ class Incident:
     alerts: list[dict[str, Any]] = field(default_factory=list)
     entities: set[str] = field(default_factory=set)
     tactics: list[str] = field(default_factory=list)
+    techniques: list[str] = field(default_factory=list)
     first_seen: datetime | None = None
     last_seen: datetime | None = None
     severity: str = "low"
@@ -86,6 +100,7 @@ class Incident:
             "alert_count": len(self.alerts),
             "entities": sorted(self.entities),
             "tactics": list(self.tactics),
+            "techniques": list(self.techniques),
             "first_seen": self.first_seen.isoformat() if self.first_seen else None,
             "last_seen": self.last_seen.isoformat() if self.last_seen else None,
             "severity": self.severity,
@@ -105,10 +120,11 @@ class CorrelationEngine:
 
     def _entity_keys(self, alert: Mapping[str, Any]) -> set[str]:
         keys = {
-            str(alert.get(key))
+            str(alert.get(key)).strip().casefold()
             for key in ("host", "hostname", "user", "username", "source_ip", "destination_ip", "process_name", "image")
             if alert.get(key) not in (None, "")
         }
+        keys.update(item.strip().casefold() for item in _flatten_strings(alert.get("entities")))
         return keys
 
     def correlate(self, alerts: Iterable[Mapping[str, Any]]) -> list[Incident]:
@@ -144,10 +160,13 @@ class CorrelationEngine:
             if len(cluster.alerts) > self.max_alerts:
                 cluster.alerts = cluster.alerts[: self.max_alerts]
             tactics = list(dict.fromkeys(cluster.tactics))
+            severities = {str(alert.get("severity", "low")).strip().lower() for alert in cluster.alerts}
             severity = "low"
-            if any(alert.get("severity") in {"critical", "high", "sev0", "sev1"} for alert in cluster.alerts):
-                severity = "critical" if any(alert.get("severity") in {"critical", "sev0"} for alert in cluster.alerts) else "high"
-            elif any(alert.get("severity") in {"medium", "sev2"} for alert in cluster.alerts):
+            if severities & {"critical", "sev0", "sev-0", "0"}:
+                severity = "critical"
+            elif severities & {"high", "sev1", "sev-1", "1"}:
+                severity = "high"
+            elif severities & {"medium", "moderate", "sev2", "sev-2", "2"}:
                 severity = "medium"
             score = sum(float(alert.get("score", 0) or 0) for alert in cluster.alerts)
             incident = Incident(
@@ -156,6 +175,7 @@ class CorrelationEngine:
                 alerts=cluster.alerts,
                 entities=set(cluster.entities),
                 tactics=tactics,
+                techniques=list(cluster.techniques),
                 first_seen=cluster.first_seen,
                 last_seen=cluster.last_seen,
                 severity=severity,
@@ -169,9 +189,11 @@ def _parse_time(value: Any) -> datetime | None:
     if value is None:
         return None
     if isinstance(value, datetime):
+        if value.tzinfo is not None:
+            return value.astimezone(timezone.utc).replace(tzinfo=None)
         return value
     if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value)
+        return datetime.fromtimestamp(value, tz=timezone.utc).replace(tzinfo=None)
     text = str(value).strip()
     if not text:
         return None
@@ -179,7 +201,7 @@ def _parse_time(value: Any) -> datetime | None:
         try:
             parsed = datetime.strptime(text, candidate)
             if parsed.tzinfo is not None:
-                return parsed.astimezone().replace(tzinfo=None)
+                return parsed.astimezone(timezone.utc).replace(tzinfo=None)
             return parsed
         except ValueError:
             continue
