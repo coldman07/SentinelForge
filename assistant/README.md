@@ -29,6 +29,12 @@ For an alert-focused explanation, POST `{"alert_id":"<event-id>"}` to
 then asks the model to describe its rule or anomaly evidence and distinguish
 observations from interpretation.
 
+For an incident timeline, POST `{"incident_id":"INC-..."}` to
+`/v1/investigate-incident`. The assistant uses stored incident snapshots and
+their linked source alerts. The dashboard's incident cards and detection rows
+provide one-click investigation and explanation actions; its chat panel posts
+through the gateway's same-origin assistant routes.
+
 ## Configuration
 
 - `SF_ASSISTANT_ADDR`: listener address, default `127.0.0.1:8090`.
@@ -43,6 +49,6 @@ observations from interpretation.
   `data/assistant-audit.jsonl`.
 
 The assistant exposes no write tools or response actions. It can retrieve only
-the gateway's bounded recent event and alert lists. Returned model citations
+the gateway's bounded recent event, alert, and incident lists. Returned citations
 are checked against the retrieved event IDs; unsupported citation IDs are
 reported separately. If no matching evidence is found, the model is not called.

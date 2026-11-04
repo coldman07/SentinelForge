@@ -26,6 +26,10 @@ _EXPLAIN_ALERT_GUIDANCE = """Explain the selected detection for an analyst. Iden
 detection type, summarize the concrete matched evidence and anomaly features if present,
 and distinguish observed facts from interpretation. Do not infer malicious intent solely
 from a process name or command. If the alert lacks matched evidence, say what is missing."""
+_INVESTIGATE_INCIDENT_GUIDANCE = """Summarize the selected incident timeline using its stored alerts.
+Describe the observed order and time span, shared entities, and ATT&CK tactic/technique
+progression when present. Cite each factual event claim with the source alert's event_id.
+Do not claim causality or attacker intent unless the stored evidence directly supports it."""
 
 
 class InvestigationAssistant:
@@ -44,18 +48,21 @@ class InvestigationAssistant:
 
     def investigate(self, question: str, *, host_id: str | None = None,
                     event_id: str | None = None, limit: int = 100,
-                    task: str = "investigate") -> dict[str, Any]:
+                    task: str = "investigate", incident_id: str | None = None) -> dict[str, Any]:
         if not isinstance(question, str) or not question.strip():
             raise ValueError("question must be a non-empty string")
         if len(question) > 4_000:
             raise ValueError("question must be 4,000 characters or fewer")
-        if task not in {"investigate", "explain_alert"}:
+        if task not in {"investigate", "explain_alert", "investigate_incident"}:
             raise ValueError("unsupported assistant task")
         if task == "explain_alert" and not event_id:
             raise ValueError("event_id is required to explain an alert")
+        if task == "investigate_incident" and not incident_id:
+            raise ValueError("incident_id is required to investigate an incident")
         self.tools.calls.clear()
         evidence = self.tools.retrieve_evidence(
-            question.strip(), host_id=host_id, event_id=event_id, limit=limit
+            question.strip(), host_id=host_id, event_id=event_id,
+            incident_id=incident_id, limit=limit,
         )
         evidence, omitted_evidence = _bound_evidence(evidence)
         evidence_ids = {item["event_id"] for item in evidence if item.get("event_id")}
@@ -76,8 +83,12 @@ class InvestigationAssistant:
             {"role": "user", "content": json.dumps({
                 "question": question.strip(),
                 "task": task,
-                "task_guidance": _EXPLAIN_ALERT_GUIDANCE if task == "explain_alert" else None,
-                "scope": {"host_id": host_id, "event_id": event_id},
+                "task_guidance": (
+                    _EXPLAIN_ALERT_GUIDANCE if task == "explain_alert"
+                    else _INVESTIGATE_INCIDENT_GUIDANCE if task == "investigate_incident"
+                    else None
+                ),
+                "scope": {"host_id": host_id, "event_id": event_id, "incident_id": incident_id},
                 "evidence": evidence,
             }, ensure_ascii=False, default=str)},
         ]
@@ -125,6 +136,18 @@ class InvestigationAssistant:
             event_id=alert_id,
             limit=limit,
             task="explain_alert",
+        )
+
+    def investigate_incident(self, incident_id: str, *, limit: int = 100) -> dict[str, Any]:
+        """Summarize a stored incident using its linked source alert evidence."""
+        if not isinstance(incident_id, str) or not incident_id.strip():
+            raise ValueError("incident_id must be a non-empty string")
+        incident_id = incident_id.strip()
+        return self.investigate(
+            f"Investigate incident {incident_id}: summarize its timeline and supporting evidence.",
+            incident_id=incident_id,
+            limit=limit,
+            task="investigate_incident",
         )
 
     def _audit(self, question: str, result: dict[str, Any]) -> None:

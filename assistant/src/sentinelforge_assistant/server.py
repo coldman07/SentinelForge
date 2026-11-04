@@ -30,7 +30,9 @@ def main() -> int:
 
         def do_POST(self) -> None:  # noqa: N802
             path = urlparse(self.path).path
-            if path not in {"/v1/investigate", "/v1/explain-alert"}:
+            if path not in {
+                "/v1/investigate", "/v1/explain-alert", "/v1/investigate-incident"
+            }:
                 self._write(404, {"error": "not found"})
                 return
             if token and not hmac.compare_digest(
@@ -50,6 +52,10 @@ def main() -> int:
                 if path == "/v1/explain-alert":
                     result = assistant.explain_alert(
                         payload.get("alert_id", ""), limit=payload.get("limit", 100)
+                    )
+                elif path == "/v1/investigate-incident":
+                    result = assistant.investigate_incident(
+                        payload.get("incident_id", ""), limit=payload.get("limit", 100)
                     )
                 else:
                     result = assistant.investigate(

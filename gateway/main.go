@@ -40,7 +40,7 @@ func main() {
 
 	server := &http.Server{
 		Addr:              address,
-		Handler:           ingest.NewHandlerWithData(publisher, clickHouseStore, clickHouseStore),
+		Handler:           ingest.NewHandlerWithServices(publisher, clickHouseStore, clickHouseStore, clickHouseStore),
 		ReadHeaderTimeout: 5 * time.Second,
 	}
 

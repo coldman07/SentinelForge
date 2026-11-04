@@ -40,6 +40,17 @@ ENGINE = ReplacingMergeTree
 PARTITION BY toYYYYMM(timestamp)
 ORDER BY (host_id, timestamp, event_id)`
 
+const incidentSchema = `CREATE TABLE IF NOT EXISTS sentinelforge.incidents
+(
+	 incident_id String,
+	 updated_at DateTime64(9, 'UTC'),
+	 severity LowCardinality(String),
+	 score Float64,
+	 incident_json String
+)
+ENGINE = ReplacingMergeTree(updated_at)
+ORDER BY incident_id`
+
 // ClickHouseStore writes normalized events using ClickHouse's HTTP interface.
 type ClickHouseStore struct {
 	endpoint *url.URL
@@ -81,6 +92,13 @@ type AlertSummary struct {
 	Alert      json.RawMessage `json:"alert"`
 }
 
+// IncidentSummary contains a current incident snapshot and its correlated alerts.
+type IncidentSummary struct {
+	IncidentID string          `json:"incident_id"`
+	UpdatedAt  string          `json:"updated_at"`
+	Incident   json.RawMessage `json:"incident"`
+}
+
 func NewClickHouseStore(endpoint, username, password string) (*ClickHouseStore, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
@@ -107,7 +125,94 @@ func (s *ClickHouseStore) EnsureSchema(ctx context.Context) error {
 	if err := s.query(ctx, "ALTER TABLE sentinelforge.alerts ADD COLUMN IF NOT EXISTS rule_titles Array(String) AFTER rule_ids"); err != nil {
 		return fmt.Errorf("add alert rule titles column: %w", err)
 	}
+	if err := s.query(ctx, incidentSchema); err != nil {
+		return fmt.Errorf("create incidents table: %w", err)
+	}
 	return nil
+}
+
+// InsertIncident stores each correlated incident snapshot as a replacing version.
+func (s *ClickHouseStore) InsertIncident(ctx context.Context, payload []byte) error {
+	var envelope struct {
+		UpdatedAt string `json:"updated_at"`
+		Incident  struct {
+			IncidentID string  `json:"incident_id"`
+			Severity   string  `json:"severity"`
+			Score      float64 `json:"score"`
+		} `json:"incident"`
+	}
+	if err := json.Unmarshal(payload, &envelope); err != nil {
+		return fmt.Errorf("decode incident snapshot: %w", err)
+	}
+	if envelope.Incident.IncidentID == "" || envelope.UpdatedAt == "" {
+		return fmt.Errorf("incident snapshot is missing incident_id or updated_at")
+	}
+	updatedAt, err := time.Parse(time.RFC3339Nano, envelope.UpdatedAt)
+	if err != nil {
+		return fmt.Errorf("parse incident update timestamp: %w", err)
+	}
+	row := struct {
+		IncidentID   string  `json:"incident_id"`
+		UpdatedAt    string  `json:"updated_at"`
+		Severity     string  `json:"severity"`
+		Score        float64 `json:"score"`
+		IncidentJSON string  `json:"incident_json"`
+	}{
+		IncidentID:   envelope.Incident.IncidentID,
+		UpdatedAt:    updatedAt.UTC().Format("2006-01-02 15:04:05.999999999"),
+		Severity:     envelope.Incident.Severity,
+		Score:        envelope.Incident.Score,
+		IncidentJSON: string(payload),
+	}
+	body, err := json.Marshal(row)
+	if err != nil {
+		return fmt.Errorf("encode incident snapshot row: %w", err)
+	}
+	return s.request(ctx, "INSERT INTO sentinelforge.incidents FORMAT JSONEachRow", bytes.NewReader(body))
+}
+
+// ListRecentIncidents returns the newest deduplicated incident snapshots.
+func (s *ClickHouseStore) ListRecentIncidents(ctx context.Context, limit int) ([]IncidentSummary, error) {
+	if limit < 1 {
+		limit = 1
+	}
+	if limit > 100 {
+		limit = 100
+	}
+	query := fmt.Sprintf(`SELECT incident_id,
+	 formatDateTime(updated_at, '%%Y-%%m-%%dT%%H:%%i:%%S.%%fZ', 'UTC') AS updated_at,
+	 incident_json
+FROM sentinelforge.incidents FINAL
+ORDER BY updated_at DESC
+LIMIT %d
+FORMAT JSONEachRow`, limit)
+	body, err := s.requestBody(ctx, query, strings.NewReader(""))
+	if err != nil {
+		return nil, err
+	}
+	decoder := json.NewDecoder(bytes.NewReader(body))
+	incidents := make([]IncidentSummary, 0, limit)
+	for {
+		var row struct {
+			IncidentID   string `json:"incident_id"`
+			UpdatedAt    string `json:"updated_at"`
+			IncidentJSON string `json:"incident_json"`
+		}
+		if err := decoder.Decode(&row); err != nil {
+			if err == io.EOF {
+				return incidents, nil
+			}
+			return nil, fmt.Errorf("decode incident summary: %w", err)
+		}
+		if !json.Valid([]byte(row.IncidentJSON)) {
+			return nil, fmt.Errorf("stored incident %q contains invalid JSON", row.IncidentID)
+		}
+		incidents = append(incidents, IncidentSummary{
+			IncidentID: row.IncidentID,
+			UpdatedAt:  row.UpdatedAt,
+			Incident:   json.RawMessage(row.IncidentJSON),
+		})
+	}
 }
 
 // InsertEvent stores searchable envelope columns and preserves the full event

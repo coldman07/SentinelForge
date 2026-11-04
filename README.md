@@ -209,7 +209,7 @@ The M6 worker maintains a bounded rolling alert window, groups alerts by shared 
 Handles enrolment, configuration, signed agent/rule updates, response orchestration and RBAC. **Open Policy Agent (OPA)** evaluates approval policies as code.
 
 ### 10. Analyst dashboard (React + TypeScript)
-The current embedded development dashboard summarizes event volume and categories, lists searchable/filterable activity, and shows recent Sigma detections with severity, matching rule metadata and event evidence. It reads from loopback-only APIs. The standalone M7 assistant service can retrieve recent event and alert records, but the React application, incident timelines, host and user views, hunting, rule management, approval queues and integrated assistant chat remain planned.
+The current embedded development dashboard summarizes event volume and categories, lists searchable/filterable activity, and shows recent detections with evidence. It also shows persisted incident snapshots and includes chat, explain-alert, and investigate-incident actions backed by the read-only M7 assistant service. Host and user views, hunting, rule management, and approval queues remain planned.
 
 ## 📐 Event Schema
 
@@ -451,6 +451,8 @@ The local gateway, event store, detection worker and UEBA worker read these deve
 | `SF_THREAT_INTEL_URLS` | Comma-separated JSON IOC feed URLs | *(unset)* |
 | `SF_ASSET_CRITICALITY_JSON` | JSON map of asset labels to criticality values | *(unset)* |
 | `SF_CORRELATION_WINDOW_SECONDS` | Rolling M6 incident window | `21600` |
+| `SF_ASSISTANT_URL` | Local assistant service base URL used by the gateway proxy | `http://127.0.0.1:8090` |
+| `SF_ASSISTANT_BEARER_TOKEN` | Optional shared token between gateway proxy and assistant | *(unset)* |
 
 Response-mode and agent-governor settings remain planned. Assistant settings are documented in `assistant/README.md`.
 
@@ -518,11 +520,11 @@ An EDR is a high-value target, so its own security is a first-class requirement.
   - [x] Configurable JSON IOC feeds, CISA KEV, and FIRST EPSS lookups
   - [x] MITRE ATT&CK technique resolution and tactic mapping
   - [x] Bounded alert clustering and incident publication to JetStream
-- [ ] **M7** — AI assistant with read-only tools and citations
-  - [x] Read-only retrieval of recent events and alerts through gateway GET APIs
+- [x] **M7** — AI assistant with read-only tools and citations
+  - [x] Read-only retrieval of recent events, alerts, and incidents through gateway APIs
   - [x] Alert explanation workflow for stored rule/anomaly evidence
   - [x] Evidence-bound model answers with checked event-ID citations and JSONL audit
-  - [ ] Incident retrieval, explain-alert workflow, and dashboard chat integration
+  - [x] Incident retrieval, explain-alert workflow, and dashboard chat integration
 - [ ] **M8** — Adaptive rule lifecycle, control plane, OPA response gates
 - [ ] **M9** — Hardening: mTLS everywhere, signed updates, self-protection, Windows driver
 - [ ] **M10** — Benchmarks, documentation, first public release

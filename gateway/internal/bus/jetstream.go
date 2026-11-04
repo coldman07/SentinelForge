@@ -12,10 +12,12 @@ import (
 )
 
 const (
-	eventStreamName  = "SENTINELFORGE_EVENTS"
-	eventSubjectRoot = "sentinelforge.events.v1"
-	alertStreamName  = "SENTINELFORGE_ALERTS"
-	alertSubjectRoot = "sentinelforge.alerts.v1"
+	eventStreamName     = "SENTINELFORGE_EVENTS"
+	eventSubjectRoot    = "sentinelforge.events.v1"
+	alertStreamName     = "SENTINELFORGE_ALERTS"
+	alertSubjectRoot    = "sentinelforge.alerts.v1"
+	incidentStreamName  = "SENTINELFORGE_INCIDENTS"
+	incidentSubjectRoot = "sentinelforge.incidents.v1"
 )
 
 // JetStreamPublisher publishes validated events to a durable NATS stream.
@@ -48,6 +50,12 @@ func Connect(url string) (*JetStreamPublisher, *nats.Conn, error) {
 		{
 			Name:      alertStreamName,
 			Subjects:  []string{alertSubjectRoot + ".>"},
+			Retention: nats.LimitsPolicy,
+			Storage:   nats.FileStorage,
+		},
+		{
+			Name:      incidentStreamName,
+			Subjects:  []string{incidentSubjectRoot + ".>"},
 			Retention: nats.LimitsPolicy,
 			Storage:   nats.FileStorage,
 		},

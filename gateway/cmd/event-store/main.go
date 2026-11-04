@@ -32,10 +32,18 @@ func main() {
 		log.Fatal(err)
 	}
 	defer connection.Drain()
-	log.Printf("event store consuming events and alerts and writing to %s", clickHouseURL)
-	consumerErrors := make(chan error, 2)
+	log.Printf("event store consuming events, alerts, and incidents and writing to %s", clickHouseURL)
+	consumerErrors := make(chan error, 3)
 	go func() {
 		consumerErrors <- publisher.Consume(ctx, "EVENT_STORE", store.InsertEvent)
+	}()
+	go func() {
+		consumerErrors <- publisher.ConsumeSubject(
+			ctx,
+			"sentinelforge.incidents.v1.>",
+			"INCIDENT_STORE",
+			store.InsertIncident,
+		)
 	}()
 	go func() {
 		consumerErrors <- publisher.ConsumeSubject(

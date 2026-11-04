@@ -1,20 +1,25 @@
 package ingest
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/coldman07/SentinelForge/gateway/internal/dashboard"
 	"github.com/coldman07/SentinelForge/gateway/internal/store"
 )
 
 const maxEventBytes = 1 << 20
+const maxAssistantRequestBytes = 64 << 10
+const maxAssistantResponseBytes = 2 << 20
 
 // Publisher is implemented by the event-bus integration. Publish must return
 // only after it has accepted responsibility for the event.
@@ -30,6 +35,11 @@ type EventReader interface {
 // AlertReader provides recent stored detections to the local dashboard.
 type AlertReader interface {
 	ListRecentAlerts(ctx context.Context, limit int) ([]store.AlertSummary, error)
+}
+
+// IncidentReader provides current incident snapshots to the local dashboard and assistant.
+type IncidentReader interface {
+	ListRecentIncidents(ctx context.Context, limit int) ([]store.IncidentSummary, error)
 }
 
 // Event is the JSON representation of sentinelforge.events.v1.Event. The
@@ -71,9 +81,12 @@ type RawSource struct {
 }
 
 type Handler struct {
-	publisher   Publisher
-	eventReader EventReader
-	alertReader AlertReader
+	publisher       Publisher
+	eventReader     EventReader
+	alertReader     AlertReader
+	incidentReader  IncidentReader
+	assistantURL    string
+	assistantClient *http.Client
 }
 
 func NewHandler(publisher Publisher) http.Handler {
@@ -85,12 +98,31 @@ func NewHandlerWithEvents(publisher Publisher, eventReader EventReader) http.Han
 }
 
 func NewHandlerWithData(publisher Publisher, eventReader EventReader, alertReader AlertReader) http.Handler {
-	h := &Handler{publisher: publisher, eventReader: eventReader, alertReader: alertReader}
+	return NewHandlerWithServices(publisher, eventReader, alertReader, nil)
+}
+
+func NewHandlerWithServices(publisher Publisher, eventReader EventReader, alertReader AlertReader, incidentReader IncidentReader) http.Handler {
+	assistantURL := os.Getenv("SF_ASSISTANT_URL")
+	if assistantURL == "" {
+		assistantURL = "http://127.0.0.1:8090"
+	}
+	h := &Handler{
+		publisher:       publisher,
+		eventReader:     eventReader,
+		alertReader:     alertReader,
+		incidentReader:  incidentReader,
+		assistantURL:    strings.TrimRight(assistantURL, "/"),
+		assistantClient: &http.Client{Timeout: 90 * time.Second},
+	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /{$}", dashboard.Handler())
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /v1/events", h.events)
 	mux.HandleFunc("GET /v1/alerts", h.alerts)
+	mux.HandleFunc("GET /v1/incidents", h.incidents)
+	mux.HandleFunc("POST /v1/assistant/investigate", h.assistantProxy("/v1/investigate"))
+	mux.HandleFunc("POST /v1/assistant/explain-alert", h.assistantProxy("/v1/explain-alert"))
+	mux.HandleFunc("POST /v1/assistant/investigate-incident", h.assistantProxy("/v1/investigate-incident"))
 	mux.HandleFunc("POST /v1/events", h.ingest)
 	return mux
 }
@@ -144,6 +176,79 @@ func (h *Handler) alerts(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	if err := json.NewEncoder(w).Encode(alerts); err != nil {
 		return
+	}
+}
+
+func (h *Handler) incidents(w http.ResponseWriter, r *http.Request) {
+	if !h.requireLoopback(w, r) {
+		return
+	}
+	if h.incidentReader == nil {
+		http.Error(w, "incident store is not configured", http.StatusServiceUnavailable)
+		return
+	}
+	limit, ok := requestedLimit(w, r)
+	if !ok {
+		return
+	}
+	incidents, err := h.incidentReader.ListRecentIncidents(r.Context(), limit)
+	if err != nil {
+		http.Error(w, "could not load incident records", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	w.Header().Set("Content-Type", "application/json; charset=utf-8")
+	if err := json.NewEncoder(w).Encode(incidents); err != nil {
+		return
+	}
+}
+
+func (h *Handler) assistantProxy(assistantPath string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !h.requireLoopback(w, r) {
+			return
+		}
+		if !strings.HasPrefix(r.Header.Get("Content-Type"), "application/json") {
+			http.Error(w, "Content-Type must be application/json", http.StatusUnsupportedMediaType)
+			return
+		}
+		body, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxAssistantRequestBytes))
+		if err != nil {
+			http.Error(w, "assistant request is too large or unreadable", http.StatusRequestEntityTooLarge)
+			return
+		}
+		request, err := http.NewRequestWithContext(r.Context(), http.MethodPost, h.assistantURL+assistantPath, bytes.NewReader(body))
+		if err != nil {
+			http.Error(w, "could not prepare assistant request", http.StatusInternalServerError)
+			return
+		}
+		request.Header.Set("Content-Type", "application/json")
+		if token := os.Getenv("SF_ASSISTANT_BEARER_TOKEN"); token != "" {
+			request.Header.Set("Authorization", "Bearer "+token)
+		}
+		response, err := h.assistantClient.Do(request)
+		if err != nil {
+			http.Error(w, "assistant service is unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		defer response.Body.Close()
+		responseBody, err := io.ReadAll(io.LimitReader(response.Body, maxAssistantResponseBytes+1))
+		if err != nil {
+			http.Error(w, "could not read assistant response", http.StatusBadGateway)
+			return
+		}
+		if len(responseBody) > maxAssistantResponseBytes {
+			http.Error(w, "assistant response is too large", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-store")
+		contentType := response.Header.Get("Content-Type")
+		if contentType == "" {
+			contentType = "application/json; charset=utf-8"
+		}
+		w.Header().Set("Content-Type", contentType)
+		w.WriteHeader(response.StatusCode)
+		_, _ = w.Write(responseBody)
 	}
 }
 
