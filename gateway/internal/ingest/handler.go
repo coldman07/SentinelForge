@@ -3,6 +3,7 @@ package ingest
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"io"
@@ -258,6 +259,13 @@ func (h *Handler) assistantProxy(assistantPath string) http.HandlerFunc {
 func (h *Handler) requireLoopback(w http.ResponseWriter, r *http.Request) bool {
 	if isLoopbackRequest(r) {
 		return true
+	}
+	if token := os.Getenv("SF_INTERNAL_API_BEARER_TOKEN"); token != "" {
+		authorization := r.Header.Get("Authorization")
+		provided, hasBearer := strings.CutPrefix(authorization, "Bearer ")
+		if hasBearer && subtle.ConstantTimeCompare([]byte(provided), []byte(token)) == 1 {
+			return true
+		}
 	}
 	http.Error(w, "dashboard data is available from this machine only", http.StatusForbidden)
 	return false

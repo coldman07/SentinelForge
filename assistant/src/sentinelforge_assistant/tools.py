@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import Mapping
 from typing import Any
 
@@ -89,7 +90,13 @@ class ReadOnlyEvidenceTools:
             raise ValueError("unsupported read-only resource")
         bounded_limit = max(1, min(int(limit), 100))
         response = self.client.get(
-            f"{self.gateway_url}/v1/{resource}", params={"limit": bounded_limit}
+            f"{self.gateway_url}/v1/{resource}",
+            params={"limit": bounded_limit},
+            headers=(
+                {"Authorization": f"Bearer {os.environ['SF_INTERNAL_API_BEARER_TOKEN']}"}
+                if os.getenv("SF_INTERNAL_API_BEARER_TOKEN")
+                else None
+            ),
         )
         response.raise_for_status()
         payload = response.json()

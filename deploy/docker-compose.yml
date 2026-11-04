@@ -2,7 +2,7 @@ services:
   nats:
     image: nats:2.14.9-alpine
     entrypoint: ["/bin/sh", "-c"]
-    command: ["if [ \"$$SF_MTLS_REQUIRED\" = \"true\" ]; then exec nats-server -c /etc/nats/nats-mtls.conf; else exec nats-server -js -sd /data; fi"]
+    command: ["if [ \"$$SF_MTLS_REQUIRED\" = \"true\" ]; then exec nats-server -c /etc/nats/nats-mtls.conf; else exec nats-server -js -sd /data -m 8222; fi"]
     ports:
       - "127.0.0.1:4222:4222"
     volumes:
@@ -11,6 +11,11 @@ services:
       - ./certs:/run/sf-certs:ro
     environment:
       SF_MTLS_REQUIRED: ${SF_MTLS_REQUIRED:-false}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://127.0.0.1:8222/healthz"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
     restart: unless-stopped
 
   clickhouse:
@@ -19,6 +24,8 @@ services:
       - "127.0.0.1:8123:8123"
     environment:
       CLICKHOUSE_DB: sentinelforge
+      CLICKHOUSE_USER: sentinelforge
+      CLICKHOUSE_PASSWORD: ${SF_CLICKHOUSE_PASSWORD:-sentinelforge-compose-local-password}
     volumes:
       - clickhouse-data:/var/lib/clickhouse
     healthcheck:
@@ -37,12 +44,136 @@ services:
       - ../policy:/policy:ro
     restart: unless-stopped
 
+  ollama:
+    image: ollama/ollama:latest
+    ports:
+      - "127.0.0.1:11434:11434"
+    volumes:
+      - ollama-data:/root/.ollama
+    restart: unless-stopped
+
+  ollama-model-init:
+    image: python:3.12-alpine
+    entrypoint: ["python", "/init.py"]
+    environment:
+      OLLAMA_URL: http://ollama:11434
+      SF_ASSISTANT_MODEL: ${SF_ASSISTANT_MODEL:-qwen2.5:0.5b}
+    volumes:
+      - ./ollama-init.py:/init.py:ro
+    depends_on:
+      - ollama
+    restart: "no"
+
+  assistant:
+    build:
+      context: ..
+      dockerfile: assistant/Dockerfile
+    environment:
+      SF_ASSISTANT_ADDR: 0.0.0.0:8090
+      SF_GATEWAY_URL: http://gateway:8080
+      SF_ASSISTANT_MODEL_URL: http://ollama:11434/v1/chat/completions
+      SF_ASSISTANT_MODEL: ${SF_ASSISTANT_MODEL:-qwen2.5:0.5b}
+      SF_ASSISTANT_BEARER_TOKEN: ${SF_INTERNAL_API_BEARER_TOKEN:-sentinelforge-compose-local-token}
+      SF_INTERNAL_API_BEARER_TOKEN: ${SF_INTERNAL_API_BEARER_TOKEN:-sentinelforge-compose-local-token}
+      SF_ASSISTANT_AUDIT_PATH: /data/assistant-audit.jsonl
+    volumes:
+      - assistant-data:/data
+    depends_on:
+      ollama-model-init:
+        condition: service_completed_successfully
+      gateway:
+        condition: service_started
+    restart: unless-stopped
+
+  gateway:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gateway
+    environment:
+      SF_GATEWAY_ADDR: :8080
+      SF_NATS_URL: nats://nats:4222
+      SF_CLICKHOUSE_URL: http://clickhouse:8123
+      SF_CLICKHOUSE_USER: ${SF_CLICKHOUSE_USER:-sentinelforge}
+      SF_CLICKHOUSE_PASSWORD: ${SF_CLICKHOUSE_PASSWORD:-sentinelforge-compose-local-password}
+      SF_ASSISTANT_URL: http://assistant:8090
+      SF_ASSISTANT_BEARER_TOKEN: ${SF_INTERNAL_API_BEARER_TOKEN:-sentinelforge-compose-local-token}
+      SF_INTERNAL_API_BEARER_TOKEN: ${SF_INTERNAL_API_BEARER_TOKEN:-sentinelforge-compose-local-token}
+      SF_OPA_URL: http://opa:8181
+      SF_DETECTION_BIN: /usr/local/bin/sentinelforge-detection
+      SF_CONTROL_STATE_PATH: /data/control-plane.json
+      SF_CONTROL_TOKENS_JSON: ${SF_CONTROL_TOKENS_JSON:-}
+      SF_RULE_SIGNING_KEY: ${SF_RULE_SIGNING_KEY:-}
+      SF_MTLS_REQUIRED: ${SF_MTLS_REQUIRED:-false}
+      SF_NATS_CA_FILE: /run/sf-certs/ca.crt
+      SF_NATS_CERT_FILE: /run/sf-certs/gateway-nats.crt
+      SF_NATS_KEY_FILE: /run/sf-certs/gateway-nats.key
+      SF_GATEWAY_CERT_FILE: /run/sf-certs/gateway-server.crt
+      SF_GATEWAY_KEY_FILE: /run/sf-certs/gateway-server.key
+      SF_CLIENT_CA_FILE: /run/sf-certs/ca.crt
+    volumes:
+      - control-plane-data:/data
+      - ./certs:/run/sf-certs:ro
+    ports:
+      - "127.0.0.1:8080:8080"
+    depends_on:
+      nats:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+      opa:
+        condition: service_started
+    restart: unless-stopped
+
+  event-store:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gateway
+    entrypoint: ["/usr/local/bin/event-store"]
+    environment:
+      SF_NATS_URL: nats://nats:4222
+      SF_CLICKHOUSE_URL: http://clickhouse:8123
+      SF_CLICKHOUSE_USER: ${SF_CLICKHOUSE_USER:-sentinelforge}
+      SF_CLICKHOUSE_PASSWORD: ${SF_CLICKHOUSE_PASSWORD:-sentinelforge-compose-local-password}
+      SF_MTLS_REQUIRED: ${SF_MTLS_REQUIRED:-false}
+      SF_NATS_CA_FILE: /run/sf-certs/ca.crt
+      SF_NATS_CERT_FILE: /run/sf-certs/eventstore-nats.crt
+      SF_NATS_KEY_FILE: /run/sf-certs/eventstore-nats.key
+    volumes:
+      - ./certs:/run/sf-certs:ro
+    depends_on:
+      nats:
+        condition: service_healthy
+      clickhouse:
+        condition: service_healthy
+    restart: unless-stopped
+
+  detection:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.gateway
+    entrypoint: ["/usr/local/bin/sentinelforge-detection"]
+    environment:
+      SF_NATS_URL: nats://nats:4222
+      SF_RULES_DIR: /rules
+      SF_MTLS_REQUIRED: ${SF_MTLS_REQUIRED:-false}
+      SF_NATS_CA_FILE: /run/sf-certs/ca.crt
+      SF_NATS_CERT_FILE: /run/sf-certs/detection-nats.crt
+      SF_NATS_KEY_FILE: /run/sf-certs/detection-nats.key
+    volumes:
+      - ../rules/sigma:/rules:ro
+      - ./certs:/run/sf-certs:ro
+    depends_on:
+      nats:
+        condition: service_healthy
+    restart: unless-stopped
+
   ueba:
     build:
       context: ..
       dockerfile: ml/Dockerfile
     depends_on:
-      - nats
+      nats:
+        condition: service_healthy
     environment:
       SF_NATS_URL: nats://nats:4222
       SF_MTLS_REQUIRED: ${SF_MTLS_REQUIRED:-false}
@@ -63,7 +194,8 @@ services:
       context: ..
       dockerfile: correlation/Dockerfile
     depends_on:
-      - nats
+      nats:
+        condition: service_healthy
     environment:
       SF_NATS_URL: nats://nats:4222
       SF_MTLS_REQUIRED: ${SF_MTLS_REQUIRED:-false}
@@ -84,3 +216,6 @@ volumes:
   nats-data:
   clickhouse-data:
   ueba-data:
+  control-plane-data:
+  assistant-data:
+  ollama-data:

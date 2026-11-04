@@ -1,0 +1,15 @@
+.git
+.venv
+**/.venv
+**/venv
+**/__pycache__
+**/*.pyc
+**/node_modules
+**/target
+**/dist
+!gateway/internal/dashboard/dist
+!gateway/internal/dashboard/dist/**
+data
+deploy/certs
+.env
+.env.*
