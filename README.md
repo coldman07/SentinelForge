@@ -502,7 +502,10 @@ An EDR is a high-value target, so its own security is a first-class requirement.
   - [x] Offline labeled-event metrics: precision, recall, false-positive rate and readiness coverage
   - [x] Synthetic labeled demo baseline/scenario dataset and offline evaluation CLI
   - [x] Durable JetStream event consumer with evidence-linked UEBA alert publishing
-- [ ] **M6** — Enrichment, ATT&CK mapping and attack-chain correlation
+- [x] **M6** — Enrichment, ATT&CK mapping and attack-chain correlation
+  - [x] Threat-intel, asset and vulnerability enrichment
+  - [x] MITRE ATT&CK technique resolution and tactic mapping
+  - [x] Alert clustering and incident generation for attack chains
 - [ ] **M7** — AI assistant with read-only tools and citations
 - [ ] **M8** — Adaptive rule lifecycle, control plane, OPA response gates
 - [ ] **M9** — Hardening: mTLS everywhere, signed updates, self-protection, Windows driver
