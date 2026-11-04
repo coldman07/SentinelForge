@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/coldman07/SentinelForge/gateway/internal/controlplane"
 	"github.com/coldman07/SentinelForge/gateway/internal/dashboard"
 	"github.com/coldman07/SentinelForge/gateway/internal/store"
 )
@@ -116,6 +117,7 @@ func NewHandlerWithServices(publisher Publisher, eventReader EventReader, alertR
 	}
 	mux := http.NewServeMux()
 	mux.Handle("GET /{$}", dashboard.Handler())
+	mux.Handle("GET /assets/", dashboard.Handler())
 	mux.HandleFunc("GET /healthz", h.health)
 	mux.HandleFunc("GET /v1/events", h.events)
 	mux.HandleFunc("GET /v1/alerts", h.alerts)
@@ -124,6 +126,7 @@ func NewHandlerWithServices(publisher Publisher, eventReader EventReader, alertR
 	mux.HandleFunc("POST /v1/assistant/explain-alert", h.assistantProxy("/v1/explain-alert"))
 	mux.HandleFunc("POST /v1/assistant/investigate-incident", h.assistantProxy("/v1/investigate-incident"))
 	mux.HandleFunc("POST /v1/events", h.ingest)
+	controlplane.NewFromEnv().Mount(mux)
 	return mux
 }
 

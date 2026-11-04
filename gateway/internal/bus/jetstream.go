@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"strings"
 	"time"
 
 	"github.com/coldman07/SentinelForge/gateway/internal/ingest"
@@ -26,11 +28,25 @@ type JetStreamPublisher struct {
 }
 
 func Connect(url string) (*JetStreamPublisher, *nats.Conn, error) {
-	conn, err := nats.Connect(url,
+	options := []nats.Option{
 		nats.Name("sentinelforge-gateway"),
 		nats.MaxReconnects(-1),
 		nats.ReconnectWait(time.Second),
-	)
+	}
+	if os.Getenv("SF_MTLS_REQUIRED") == "true" {
+		caFile, certFile, keyFile := os.Getenv("SF_NATS_CA_FILE"), os.Getenv("SF_NATS_CERT_FILE"), os.Getenv("SF_NATS_KEY_FILE")
+		if caFile == "" || certFile == "" || keyFile == "" {
+			return nil, nil, fmt.Errorf("SF_MTLS_REQUIRED needs SF_NATS_CA_FILE, SF_NATS_CERT_FILE, and SF_NATS_KEY_FILE")
+		}
+		options = append(options, nats.RootCAs(caFile), nats.ClientCert(certFile, keyFile))
+		if strings.HasPrefix(url, "nats://") {
+			url = "tls://" + strings.TrimPrefix(url, "nats://")
+		}
+		if !strings.HasPrefix(url, "tls://") {
+			return nil, nil, fmt.Errorf("mutual TLS requires a tls:// NATS URL")
+		}
+	}
+	conn, err := nats.Connect(url, options...)
 	if err != nil {
 		return nil, nil, fmt.Errorf("connect to NATS: %w", err)
 	}

@@ -8,6 +8,7 @@ import json
 import logging
 import os
 import signal
+import ssl
 from collections import deque
 from collections.abc import Mapping
 from datetime import datetime, timedelta, timezone
@@ -28,6 +29,17 @@ ENRICHED_STREAM = "SENTINELFORGE_ENRICHED"
 ENRICHED_SUBJECT = "sentinelforge.enriched.v1.alert"
 INCIDENT_STREAM = "SENTINELFORGE_INCIDENTS"
 INCIDENT_SUBJECT = "sentinelforge.incidents.v1.snapshot"
+
+
+def _nats_tls() -> ssl.SSLContext | None:
+    if os.getenv("SF_MTLS_REQUIRED", "false").lower() != "true":
+        return None
+    ca, cert, key = (os.getenv(name) for name in ("SF_NATS_CA_FILE", "SF_NATS_CERT_FILE", "SF_NATS_KEY_FILE"))
+    if not all((ca, cert, key)):
+        raise RuntimeError("SF_MTLS_REQUIRED needs SF_NATS_CA_FILE, SF_NATS_CERT_FILE, and SF_NATS_KEY_FILE")
+    context = ssl.create_default_context(cafile=ca)
+    context.load_cert_chain(certfile=cert, keyfile=key)
+    return context
 
 
 async def run_worker() -> None:
@@ -55,6 +67,7 @@ async def run_worker() -> None:
                     name="sentinelforge-enrichment-correlation",
                     max_reconnect_attempts=-1,
                     reconnect_time_wait=2,
+                    tls=_nats_tls(),
                 )
                 js = connection.jetstream()
                 await _ensure_stream(js, ENRICHED_STREAM, [ENRICHED_SUBJECT])

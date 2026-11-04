@@ -9,4 +9,6 @@ __pycache__/
 .venv/
 venv/
 data/
+node_modules/
+deploy/certs/
 *.log

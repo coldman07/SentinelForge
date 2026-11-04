@@ -5,12 +5,13 @@ use async_nats::jetstream::{
 };
 use futures_util::StreamExt;
 use sentinelforge_detection::{DetectionMatch, SigmaEngine};
-use serde::Serialize;
-use serde_json::Value;
+use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 use std::{
     env,
     error::Error,
     fs, io,
+    io::Read,
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -33,13 +34,52 @@ struct DetectionAlert {
 
 #[tokio::main]
 async fn main() -> Result<(), AnyError> {
+    if let Some(mode) = env::args().nth(1) {
+        match mode.as_str() {
+            "--validate-rule" => return validate_rule_stdin(),
+            "--replay-rule" => return replay_rule_stdin(),
+            _ => {}
+        }
+    }
     let nats_url = env::var("SF_NATS_URL").unwrap_or_else(|_| "nats://127.0.0.1:4222".into());
     let rules_dir = env::var_os("SF_RULES_DIR")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from("rules/sigma"));
     let engine = load_rules(&rules_dir)?;
 
-    let client = async_nats::connect(&nats_url).await?;
+    let client = if env::var("SF_MTLS_REQUIRED").is_ok_and(|value| value == "true") {
+        use std::{io, path::PathBuf};
+        let ca = env::var_os("SF_NATS_CA_FILE")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                io::Error::other("SF_NATS_CA_FILE is required when SF_MTLS_REQUIRED=true")
+            })?;
+        let cert = env::var_os("SF_NATS_CERT_FILE")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                io::Error::other("SF_NATS_CERT_FILE is required when SF_MTLS_REQUIRED=true")
+            })?;
+        let key = env::var_os("SF_NATS_KEY_FILE")
+            .map(PathBuf::from)
+            .ok_or_else(|| {
+                io::Error::other("SF_NATS_KEY_FILE is required when SF_MTLS_REQUIRED=true")
+            })?;
+        let tls_url = nats_url
+            .strip_prefix("nats://")
+            .map(|host| format!("tls://{host}"))
+            .unwrap_or(nats_url);
+        if !tls_url.starts_with("tls://") {
+            return Err("mutual TLS requires a tls:// NATS URL".into());
+        }
+        async_nats::ConnectOptions::new()
+            .require_tls(true)
+            .add_root_certificates(ca)
+            .add_client_certificate(cert, key)
+            .connect(tls_url)
+            .await?
+    } else {
+        async_nats::connect(&nats_url).await?
+    };
     let jetstream = async_nats::jetstream::new(client);
     let event_stream = jetstream.get_stream(EVENT_STREAM).await?;
     let consumer = event_stream
@@ -97,6 +137,62 @@ async fn main() -> Result<(), AnyError> {
             }
         }
     }
+    Ok(())
+}
+
+fn validate_rule_stdin() -> Result<(), AnyError> {
+    let mut source = String::new();
+    io::stdin().read_to_string(&mut source)?;
+    let rule = sentinelforge_detection::SigmaRule::from_yaml(&source)?;
+    println!(
+        "{}",
+        json!({
+            "valid": true,
+            "title": rule.title,
+            "rule_id": rule.id,
+            "level": rule.level,
+            "tags": rule.tags,
+        })
+    );
+    Ok(())
+}
+
+#[derive(Deserialize)]
+struct ReplayInput {
+    rule_yaml: String,
+    positive_events: Vec<Value>,
+    negative_events: Vec<Value>,
+}
+
+fn replay_rule_stdin() -> Result<(), AnyError> {
+    let mut input = String::new();
+    io::stdin().read_to_string(&mut input)?;
+    let input: ReplayInput = serde_json::from_str(&input)?;
+    let rule = sentinelforge_detection::SigmaRule::from_yaml(&input.rule_yaml)?;
+    let positive_matched = input
+        .positive_events
+        .iter()
+        .filter(|event| rule.matches(event))
+        .count();
+    let negative_matched = input
+        .negative_events
+        .iter()
+        .filter(|event| rule.matches(event))
+        .count();
+    let passed = !input.positive_events.is_empty()
+        && !input.negative_events.is_empty()
+        && positive_matched > 0
+        && negative_matched == 0;
+    println!(
+        "{}",
+        json!({
+            "passed": passed,
+            "positive_total": input.positive_events.len(),
+            "positive_matched": positive_matched,
+            "negative_total": input.negative_events.len(),
+            "negative_matched": negative_matched,
+        })
+    );
     Ok(())
 }
 

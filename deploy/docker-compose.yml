@@ -1,11 +1,16 @@
 services:
   nats:
     image: nats:2.14.9-alpine
-    command: ["-js", "-sd", "/data"]
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["if [ \"$$SF_MTLS_REQUIRED\" = \"true\" ]; then exec nats-server -c /etc/nats/nats-mtls.conf; else exec nats-server -js -sd /data; fi"]
     ports:
-      - "4222:4222"
+      - "127.0.0.1:4222:4222"
     volumes:
       - nats-data:/data
+      - ./nats-mtls.conf:/etc/nats/nats-mtls.conf:ro
+      - ./certs:/run/sf-certs:ro
+    environment:
+      SF_MTLS_REQUIRED: ${SF_MTLS_REQUIRED:-false}
     restart: unless-stopped
 
   clickhouse:
@@ -23,6 +28,15 @@ services:
       retries: 20
     restart: unless-stopped
 
+  opa:
+    image: openpolicyagent/opa:1.22.0
+    command: ["run", "--server", "--addr=0.0.0.0:8181", "/policy"]
+    ports:
+      - "127.0.0.1:8181:8181"
+    volumes:
+      - ../policy:/policy:ro
+    restart: unless-stopped
+
   ueba:
     build:
       context: ..
@@ -31,12 +45,17 @@ services:
       - nats
     environment:
       SF_NATS_URL: nats://nats:4222
+      SF_MTLS_REQUIRED: ${SF_MTLS_REQUIRED:-false}
+      SF_NATS_CA_FILE: /run/sf-certs/ca.crt
+      SF_NATS_CERT_FILE: /run/sf-certs/ueba-client.crt
+      SF_NATS_KEY_FILE: /run/sf-certs/ueba-client.key
       SF_UEBA_BASELINE_PATH: /data/ueba-baseline.json
       SF_UEBA_DURABLE_NAME: SENTINELFORGE_UEBA
       SF_UEBA_WARMUP_OBSERVATIONS: "25"
       SF_UEBA_ANOMALY_THRESHOLD: "65"
     volumes:
       - ueba-data:/data
+      - ./certs:/run/sf-certs:ro
     restart: unless-stopped
 
   enrichment-correlation:
@@ -47,12 +66,18 @@ services:
       - nats
     environment:
       SF_NATS_URL: nats://nats:4222
+      SF_MTLS_REQUIRED: ${SF_MTLS_REQUIRED:-false}
+      SF_NATS_CA_FILE: /run/sf-certs/ca.crt
+      SF_NATS_CERT_FILE: /run/sf-certs/correlation-client.crt
+      SF_NATS_KEY_FILE: /run/sf-certs/correlation-client.key
       SF_KEV_ENABLED: ${SF_KEV_ENABLED:-true}
       SF_KEV_URL: ${SF_KEV_URL:-https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json}
       SF_EPSS_URL: ${SF_EPSS_URL:-https://api.first.org/data/v1/epss}
       SF_THREAT_INTEL_URLS: ${SF_THREAT_INTEL_URLS:-}
       SF_ASSET_CRITICALITY_JSON: ${SF_ASSET_CRITICALITY_JSON:-}
       SF_CORRELATION_WINDOW_SECONDS: ${SF_CORRELATION_WINDOW_SECONDS:-21600}
+    volumes:
+      - ./certs:/run/sf-certs:ro
     restart: unless-stopped
 
 volumes:

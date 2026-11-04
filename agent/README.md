@@ -66,5 +66,14 @@ LocalSystem, which can read the Security log and start the kernel ETW sessions.
 Set `SF_GATEWAY_URL` in the system environment before starting the service when
 the gateway is not on the same host.
 
-This gateway route is an unauthenticated development transport. Use it only on
-an isolated, trusted lab network until agent authentication and mTLS are added.
+The default gateway route is an unauthenticated development transport. For
+mTLS, set `SF_MTLS_REQUIRED=true`, use an `https://` `SF_GATEWAY_URL`, and set
+`SF_GATEWAY_CA_FILE`, `SF_GATEWAY_CERT_FILE`, and `SF_GATEWAY_KEY_FILE` to the
+trusted CA and agent client identity. The gateway must require client
+certificates signed by the corresponding CA. Keep the agent private key
+restricted to the Windows service identity.
+
+After installing the Windows service, an elevated administrator can run
+`deploy/windows/harden-service.ps1` to enable a service SID and restart
+recovery. This does not provide kernel-level tamper protection; the M9 driver
+work remains open.

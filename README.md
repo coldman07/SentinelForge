@@ -206,10 +206,10 @@ The M6 worker maintains a bounded rolling alert window, groups alerts by shared 
 - **PostgreSQL:** rules and versions, users and roles, incidents, policies, approvals, audit log.
 
 ### 9. Control plane (Go) and policy engine
-Handles enrolment, configuration, signed agent/rule updates, response orchestration and RBAC. **Open Policy Agent (OPA)** evaluates approval policies as code.
+The gateway includes a local control-plane API for rule candidates, replay reports, approvals, immutable signed versions, rollback records, response requests, and a hash-chained audit log. Candidate validation and replay use the same Rust Sigma parser/evaluator as detection. **Open Policy Agent (OPA)** makes fail-closed response approval decisions; requests are recorded but are not executed by this stage.
 
-### 10. Analyst dashboard (React + TypeScript)
-The current embedded development dashboard summarizes event volume and categories, lists searchable/filterable activity, and shows recent detections with evidence. It also shows persisted incident snapshots and includes chat, explain-alert, and investigate-incident actions backed by the read-only M7 assistant service. Host and user views, hunting, rule management, and approval queues remain planned.
+### 10. Analyst dashboard (React + Vite)
+The React/Vite dashboard is built into the Go gateway and presents live event and detection summaries, severity/category filters, expandable telemetry and matched-rule evidence, correlated incident timelines, and a responsive investigation workspace. Alert explanations and incident investigations call the read-only M7 assistant and show its event citations. Host/user inventory, hunting, rule management, and approval queues remain planned.
 
 ## 📐 Event Schema
 
@@ -371,7 +371,7 @@ SentinelForge/
 ├── ml/                     # Python: UEBA features and explainable baseline scorer
 ├── assistant/              # Python: agent, read-only tools, guardrails
 ├── rulelifecycle/          # generate, validate, replay, approve, version, roll back
-├── dashboard/              # planned React analyst UI; local event view is embedded in gateway
+├── dashboard-ui/           # React/Vite analyst dashboard; production assets embedded in gateway
 ├── rules/                  # Sigma and native rule packs
 ├── policy/                 # OPA/Rego policies
 ├── datasets/               # labelled attack scenarios and benign baselines
@@ -439,6 +439,10 @@ The local gateway, event store, detection worker and UEBA worker read these deve
 | `SF_CLICKHOUSE_PASSWORD` | ClickHouse password (optional for local default setup) | *(empty)* |
 | `SF_RULES_DIR` | Directory containing Sigma YAML rules | `rules/sigma` |
 | `SF_GATEWAY_URL` | Windows sensor event-ingest endpoint | `http://127.0.0.1:8080/v1/events` |
+| `SF_MTLS_REQUIRED` | Require mutual TLS for gateway ingress and NATS clients | `false` (local development) |
+| `SF_GATEWAY_CERT_FILE`, `SF_GATEWAY_KEY_FILE`, `SF_CLIENT_CA_FILE` | Gateway HTTPS server identity and trusted agent CA | *(unset)* |
+| `SF_GATEWAY_CA_FILE`, `SF_GATEWAY_CERT_FILE`, `SF_GATEWAY_KEY_FILE` | Windows agent trusted CA and client identity | *(unset)* |
+| `SF_NATS_CA_FILE`, `SF_NATS_CERT_FILE`, `SF_NATS_KEY_FILE` | NATS client trusted CA and client identity | *(unset)* |
 | `SF_UEBA_BASELINE_PATH` | UEBA baseline JSON file | `data/ueba-baseline.json` |
 | `SF_UEBA_BASELINE_SEED` | Trusted newline-delimited events used when no saved baseline exists | *(unset)* |
 | `SF_UEBA_WARMUP_OBSERVATIONS` | Per-host events required before anomaly alerts | `25` |
@@ -453,6 +457,11 @@ The local gateway, event store, detection worker and UEBA worker read these deve
 | `SF_CORRELATION_WINDOW_SECONDS` | Rolling M6 incident window | `21600` |
 | `SF_ASSISTANT_URL` | Local assistant service base URL used by the gateway proxy | `http://127.0.0.1:8090` |
 | `SF_ASSISTANT_BEARER_TOKEN` | Optional shared token between gateway proxy and assistant | *(unset)* |
+| `SF_OPA_URL` | OPA server base URL for response policy decisions | `http://127.0.0.1:8181` |
+| `SF_CONTROL_TOKENS_JSON` | JSON map of bearer tokens to `{id, role}` principals for control-plane writes | *(unset; writes disabled)* |
+| `SF_CONTROL_STATE_PATH` | Local atomic JSON state file for candidates, versions, requests, and audit | `data/control-plane.json` |
+| `SF_DETECTION_BIN` | Built Rust detection executable used to validate/replay Sigma rules | `sentinelforge-detection` |
+| `SF_RULE_SIGNING_KEY` | Secret of at least 32 bytes used to HMAC-sign approved rule versions | *(unset; approvals disabled)* |
 
 Response-mode and agent-governor settings remain planned. Assistant settings are documented in `assistant/README.md`.
 
@@ -498,13 +507,13 @@ An EDR is a high-value target, so its own security is a first-class requirement.
 - [x] Architecture and design
 - [x] **M1** — Initial event schema (Protobuf), Go gateway and NATS JetStream publishing
 - [x] **M2** — Linux eBPF process, file and network sensor slice
-- [ ] **M3** — Detection engine with Sigma support, event store, basic dashboard
+- [x] **M3** — Detection engine with Sigma support, event store, basic dashboard
   - [x] ClickHouse event-store consumer
   - [x] Standalone Rust Sigma parsing and evaluation library
   - [x] Read-only local telemetry dashboard with recent event evidence
   - [x] Connect detection evaluation to JetStream and publish matches to the durable alerts stream
   - [x] Persist alerts in ClickHouse and show them in the dashboard
-  - [ ] Build the React alert dashboard and investigation workflows
+  - [x] Build the React alert dashboard and investigation workflows
 - [x] **M4** — Windows agent: ETW telemetry
   - [x] Process-start, file create/delete/write, TCP/UDP network and logon telemetry forwarded to gateway
   - [x] Windows service entry point, stop/shutdown handling and foreground lab mode
@@ -525,8 +534,18 @@ An EDR is a high-value target, so its own security is a first-class requirement.
   - [x] Alert explanation workflow for stored rule/anomaly evidence
   - [x] Evidence-bound model answers with checked event-ID citations and JSONL audit
   - [x] Incident retrieval, explain-alert workflow, and dashboard chat integration
-- [ ] **M8** — Adaptive rule lifecycle, control plane, OPA response gates
+- [x] **M8** — Adaptive rule lifecycle, control plane, OPA response gates
+  - [x] Rust Sigma validation and positive/benign replay through the production evaluator
+  - [x] Analyst candidate workflow, separate approver, immutable HMAC-signed versions, and rollback records
+  - [x] Role-token protected Go control-plane writes and hash-chained audit verification
+  - [x] OPA-gated response requests with fail-closed approvals and no action executor
 - [ ] **M9** — Hardening: mTLS everywhere, signed updates, self-protection, Windows driver
+  - [x] Optional fail-closed mTLS for Windows agent → gateway, gateway/event-store → NATS, and Rust/Python JetStream workers
+  - [x] Ed25519-signed update artifact manifests with digest verification utility
+  - [x] Windows service SID and crash-recovery hardening helper
+  - [ ] End-to-end deployment of distinct per-service certificates and TLS for every datastore/policy link
+  - [ ] Signed update download, staged installation, rollback, and key rotation
+  - [ ] Kernel driver and tamper prevention enforcement
 - [ ] **M10** — Benchmarks, documentation, first public release
 
 **Future ideas:** macOS agent (Endpoint Security Framework), Sigma import/export tooling, ATT&CK coverage heatmap, multi-tenant mode, richer response playbooks, memory-scanning with YARA.

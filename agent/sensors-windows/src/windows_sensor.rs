@@ -8,11 +8,12 @@ use ferrisetw::{
     schema_locator::SchemaLocator,
     trace::{KernelTrace, UserTrace},
 };
-use reqwest::blocking::Client;
+use reqwest::{Certificate, Identity, blocking::Client};
 use sentinelforge_agent_core::{
     FileDetails, FileEvent, Host, NetworkConnect, NetworkDetails, ProcessReference, ProcessStart,
     RawSource, SCHEMA_VERSION, format_timestamp, uuid_v4_from_random,
 };
+use std::path::PathBuf;
 use std::{
     collections::HashMap,
     env,
@@ -81,7 +82,7 @@ where
     HOST.set(host_identity())
         .map_err(|_| "Windows sensor host identity was initialized more than once")?;
     let gateway = GatewayClient {
-        client: Client::builder().timeout(Duration::from_secs(5)).build()?,
+        client: gateway_client()?,
         endpoint: env::var("SF_GATEWAY_URL")
             .unwrap_or_else(|_| "http://127.0.0.1:8080/v1/events".into()),
     };
@@ -196,6 +197,37 @@ where
         .join()
         .map_err(|_| io::Error::other("gateway event publisher thread panicked"))?;
     Ok(())
+}
+
+fn gateway_client() -> Result<Client, Box<dyn Error>> {
+    let required =
+        env::var("SF_MTLS_REQUIRED").is_ok_and(|value| value.eq_ignore_ascii_case("true"));
+    let endpoint =
+        env::var("SF_GATEWAY_URL").unwrap_or_else(|_| "http://127.0.0.1:8080/v1/events".into());
+    let ca_file = env::var_os("SF_GATEWAY_CA_FILE").map(PathBuf::from);
+    let cert_file = env::var_os("SF_GATEWAY_CERT_FILE").map(PathBuf::from);
+    let key_file = env::var_os("SF_GATEWAY_KEY_FILE").map(PathBuf::from);
+    if required && (ca_file.is_none() || cert_file.is_none() || key_file.is_none()) {
+        return Err("SF_MTLS_REQUIRED needs SF_GATEWAY_CA_FILE, SF_GATEWAY_CERT_FILE, and SF_GATEWAY_KEY_FILE".into());
+    }
+    if required && !endpoint.starts_with("https://") {
+        return Err("SF_MTLS_REQUIRED requires an https:// SF_GATEWAY_URL".into());
+    }
+    let mut builder = Client::builder().timeout(Duration::from_secs(5));
+    if let Some(path) = ca_file {
+        builder = builder.add_root_certificate(Certificate::from_pem(&std::fs::read(path)?)?);
+    }
+    match (cert_file, key_file) {
+        (Some(cert), Some(key)) => {
+            let mut identity = std::fs::read(cert)?;
+            identity.extend_from_slice(b"\n");
+            identity.extend_from_slice(&std::fs::read(key)?);
+            builder = builder.identity(Identity::from_pem(&identity)?);
+        }
+        (None, None) => {}
+        _ => return Err("both SF_GATEWAY_CERT_FILE and SF_GATEWAY_KEY_FILE are required".into()),
+    }
+    Ok(builder.build()?)
 }
 
 fn process_callback(

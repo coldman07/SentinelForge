@@ -7,6 +7,7 @@ import json
 import logging
 import os
 import signal
+import ssl
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
@@ -22,6 +23,17 @@ EVENT_SUBJECT = "sentinelforge.events.v1.>"
 ALERT_SUBJECT = "sentinelforge.alerts.v1.match"
 DEFAULT_DURABLE = "SENTINELFORGE_UEBA"
 LOG = logging.getLogger("sentinelforge.ueba")
+
+
+def _nats_tls() -> ssl.SSLContext | None:
+    if os.getenv("SF_MTLS_REQUIRED", "false").lower() != "true":
+        return None
+    ca, cert, key = (os.getenv(name) for name in ("SF_NATS_CA_FILE", "SF_NATS_CERT_FILE", "SF_NATS_KEY_FILE"))
+    if not all((ca, cert, key)):
+        raise RuntimeError("SF_MTLS_REQUIRED needs SF_NATS_CA_FILE, SF_NATS_CERT_FILE, and SF_NATS_KEY_FILE")
+    context = ssl.create_default_context(cafile=ca)
+    context.load_cert_chain(certfile=cert, keyfile=key)
+    return context
 
 
 async def run_worker() -> None:
@@ -55,6 +67,7 @@ async def run_worker() -> None:
                 name="sentinelforge-ueba",
                 max_reconnect_attempts=-1,
                 reconnect_time_wait=2,
+                tls=_nats_tls(),
             )
             jetstream = connection.jetstream()
             consumer_config = ConsumerConfig(
