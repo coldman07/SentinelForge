@@ -1,0 +1,41 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "sentinelforge-correlation"
+version = "0.1.0"
+description = "Enrichment, ATT&CK mapping and attack-chain correlation for SentinelForge"
+readme = "README.md"
+license = {text = "Apache-2.0"}
+requires-python = ">=3.11"
+dependencies = [
+    "nats-py>=2.7.0",
+    "pydantic>=2.6",
+    "pyyaml>=6.0",
+    "httpx>=0.26",
+    "tenacity>=8.2",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "pytest-cov>=4.1",
+    "ruff>=0.3",
+]
+
+[project.scripts]
+sentinelforge-enrichment = "sentinelforge_correlation.enrichment_worker:main"
+sentinelforge-correlation = "sentinelforge_correlation.correlation_worker:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]

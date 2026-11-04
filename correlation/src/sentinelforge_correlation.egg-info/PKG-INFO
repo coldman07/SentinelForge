@@ -1,0 +1,40 @@
+Metadata-Version: 2.4
+Name: sentinelforge-correlation
+Version: 0.1.0
+Summary: Enrichment, ATT&CK mapping and attack-chain correlation for SentinelForge
+License: Apache-2.0
+Requires-Python: >=3.11
+Description-Content-Type: text/markdown
+Requires-Dist: nats-py>=2.7.0
+Requires-Dist: pydantic>=2.6
+Requires-Dist: pyyaml>=6.0
+Requires-Dist: httpx>=0.26
+Requires-Dist: tenacity>=8.2
+Provides-Extra: dev
+Requires-Dist: pytest>=7.4; extra == "dev"
+Requires-Dist: pytest-asyncio>=0.23; extra == "dev"
+Requires-Dist: pytest-cov>=4.1; extra == "dev"
+Requires-Dist: ruff>=0.3; extra == "dev"
+
+# SentinelForge Correlation
+
+This package adds the enrichment, ATT&CK mapping, and attack-chain correlation components for SentinelForge.
+
+It provides:
+- ATT&CK technique lookup and mapping helpers
+- alert enrichment and risk scoring
+- alert clustering and incident generation
+
+## Quick usage
+
+```python
+from sentinelforge_correlation import ATTACKMapper, EnrichmentEngine, CorrelationEngine
+
+mapper = ATTACKMapper()
+techniques = mapper.map_alert({"techniques": ["T1059.001", "T1078"]})
+
+alert = {"alert_id": "A-1", "title": "PowerShell execution", "severity": "high", "source_ip": "1.2.3.4"}
+scored = EnrichmentEngine().enrich(alert)
+
+incidents = CorrelationEngine().correlate([alert])
+```

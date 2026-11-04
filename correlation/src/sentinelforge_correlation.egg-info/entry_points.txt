@@ -1,0 +1,3 @@
+[console_scripts]
+sentinelforge-correlation = sentinelforge_correlation.correlation_worker:main
+sentinelforge-enrichment = sentinelforge_correlation.enrichment_worker:main
